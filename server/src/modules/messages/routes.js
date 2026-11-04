@@ -1,0 +1,77 @@
+import { Router } from 'express';
+import { asyncHandler } from '../../lib/errors.js';
+import { parse, schemas } from '../../lib/validate.js';
+import { requireAuth } from '../../middleware/auth.js';
+import { writeLimiter } from '../../middleware/security.js';
+import * as messages from './service.js';
+
+export const messagesRouter = Router();
+
+// requireAuth is applied per route (not via router.use) so that unknown /api
+// paths still fall through to the JSON 404 handler instead of a 401.
+
+messagesRouter.get(
+  '/chats/:chatId/messages',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { before, limit } = parse(schemas.listMessages, req.query);
+    res.json({ data: await messages.listMessages(req.user.id, req.params.chatId, { before, limit }) });
+  }),
+);
+
+messagesRouter.post(
+  '/chats/:chatId/messages',
+  requireAuth,
+  writeLimiter,
+  asyncHandler(async (req, res) => {
+    const input = parse(schemas.sendMessage, { ...req.body, chatId: req.params.chatId });
+    res.status(201).json({ data: { message: await messages.sendMessage(req.user.id, input) } });
+  }),
+);
+
+messagesRouter.get(
+  '/chats/:chatId/search',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { q } = parse(schemas.searchMessages, req.query);
+    res.json({ data: { messages: await messages.searchMessages(req.user.id, req.params.chatId, q) } });
+  }),
+);
+
+messagesRouter.post(
+  '/chats/:chatId/read',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const input = parse(schemas.markRead, req.body);
+    res.json({ data: await messages.markRead(req.user.id, req.params.chatId, input) });
+  }),
+);
+
+messagesRouter.patch(
+  '/messages/:id',
+  requireAuth,
+  writeLimiter,
+  asyncHandler(async (req, res) => {
+    const { body } = parse(schemas.editMessage, req.body);
+    res.json({ data: { message: await messages.editMessage(req.user.id, req.params.id, body) } });
+  }),
+);
+
+messagesRouter.delete(
+  '/messages/:id',
+  requireAuth,
+  writeLimiter,
+  asyncHandler(async (req, res) => {
+    res.json({ data: await messages.deleteMessage(req.user.id, req.params.id) });
+  }),
+);
+
+messagesRouter.post(
+  '/messages/:id/reactions',
+  requireAuth,
+  writeLimiter,
+  asyncHandler(async (req, res) => {
+    const { emoji } = parse(schemas.react, req.body);
+    res.json({ data: { message: await messages.toggleReaction(req.user.id, req.params.id, emoji) } });
+  }),
+);

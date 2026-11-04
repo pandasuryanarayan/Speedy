@@ -1,0 +1,38 @@
+{
+  "name": "speedy-chat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Speedy - a production-ready WhatsApp-style chat app (Node.js, Socket.IO, SQLite, vanilla ES modules).",
+  "type": "module",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "start": "node server/src/index.js",
+    "dev": "node --watch server/src/index.js",
+    "migrate": "node server/src/db/migrate.js",
+    "seed": "node server/src/db/seed.js",
+    "test": "node --test --test-concurrency=1 server/tests/",
+    "test:watch": "node --test --watch server/tests/"
+  },
+  "keywords": ["chat", "whatsapp", "socket.io", "express", "sqlite", "realtime"],
+  "author": "Suryanarayan Panda",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@libsql/client": "^0.15.15",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^17.4.2",
+    "express": "^4.22.3",
+    "express-rate-limit": "^8.7.3",
+    "helmet": "^8.3.0",
+    "jose": "^6.2.15",
+    "multer": "^2.5.0",
+    "pino": "^10.4.0",
+    "pino-http": "^11.0.0",
+    "socket.io": "^4.8.4",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "pino-pretty": "^13.2.0"
+  }
+}
