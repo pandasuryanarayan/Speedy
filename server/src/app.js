@@ -1,5 +1,6 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
+import fs from 'node:fs';
 import pinoHttp from 'pino-http';
 import path from 'node:path';
 import config from './config.js';
@@ -13,6 +14,8 @@ import { usersRouter } from './modules/users/routes.js';
 import { chatsRouter } from './modules/chats/routes.js';
 import { messagesRouter } from './modules/messages/routes.js';
 import { attachmentsRouter } from './modules/attachments/routes.js';
+
+const pkg = JSON.parse(fs.readFileSync(path.join(config.projectRoot, 'package.json'), 'utf8'));
 
 export function createApp() {
   const app = express();
@@ -36,7 +39,7 @@ export function createApp() {
   app.get('/healthz', async (req, res) => {
     try {
       await get('SELECT 1 AS ok');
-      res.json({ status: 'ok', uptime: Math.round(process.uptime()), env: config.nodeEnv });
+      res.json({ status: 'ok', version: pkg.version, uptime: Math.round(process.uptime()), env: config.nodeEnv });
     } catch {
       res.status(503).json({ status: 'degraded' });
     }

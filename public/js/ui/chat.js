@@ -1,5 +1,34 @@
 import { h, avatarEl, icon, fmtTime, fmtDay, sameDay, fmtLastSeen, fmtBytes, initials, hueFor } from '../dom.js';
 import { lightbox } from './modals.js';
+import { fetchAttachmentBlob } from '../api.js';
+
+// Images fall back to an authenticated fetch if their signed URL is stale.
+const imageCache = new Map();
+
+function imageNode(attachment) {
+  const img = h('img', {
+    src: attachment.url,
+    alt: attachment.name,
+    loading: 'lazy',
+    onclick: () => lightbox(img.src),
+  });
+  img.addEventListener('error', async () => {
+    if (img.dataset.recovered) return;
+    img.dataset.recovered = '1';
+    try {
+      let url = imageCache.get(attachment.id);
+      if (!url) {
+        const blob = await fetchAttachmentBlob(attachment.id);
+        url = URL.createObjectURL(blob);
+        imageCache.set(attachment.id, url);
+      }
+      img.src = url;
+    } catch {
+      /* leave the alt text in place */
+    }
+  });
+  return img;
+}
 
 const QUICK_EMOJI = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 const EMOJI_PALETTE = ['😀', '😄', '😊', '😉', '😍', '😘', '😎', '🤩', '😅', '😢', '😭', '😡', '🤔', '🙃', '😴', '👍', '👎', '👏', '🙏', '💪', '🔥', '✨', '🎉', '❤️', '💜', '✅', '📌', '🚀'];
@@ -74,24 +103,18 @@ export function createChatPane(handlers) {
     if (message.deletedAt) {
       parts.push(h('span', { class: 'deleted', text: 'This message was deleted' }));
     } else if (message.type === 'image' && message.attachment) {
-      parts.push(
-        h(
-          'span',
-          { class: 'bubble-image' },
-          h('img', {
-            src: message.attachment.url,
-            alt: message.attachment.name,
-            loading: 'lazy',
-            onclick: () => lightbox(message.attachment.url),
-          }),
-        ),
-      );
+      parts.push(h('span', { class: 'bubble-image' }, imageNode(message.attachment)));
       if (message.body) parts.push(h('span', { text: message.body }));
     } else if (message.type === 'file' && message.attachment) {
       parts.push(
         h(
-          'a',
-          { class: 'bubble-file', href: message.attachment.url, download: message.attachment.name, rel: 'noopener' },
+          'button',
+          {
+            type: 'button',
+            class: 'bubble-file',
+            title: `Download ${message.attachment.name}`,
+            onclick: () => handlers.onDownload(message.attachment),
+          },
           h('span', { class: 'file-icon', html: icon('file') }),
           h(
             'span',
@@ -99,6 +122,7 @@ export function createChatPane(handlers) {
             h('span', { class: 'file-name', text: message.attachment.name }),
             h('span', { class: 'file-size', text: fmtBytes(message.attachment.size) }),
           ),
+          h('span', { class: 'file-dl', html: icon('download') }),
         ),
       );
       if (message.body) parts.push(h('span', { text: message.body }));

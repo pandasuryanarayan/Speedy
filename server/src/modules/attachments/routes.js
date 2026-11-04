@@ -9,6 +9,18 @@ import { authenticateRequest, requireAuth } from '../../middleware/auth.js';
 import { uploadLimiter } from '../../middleware/security.js';
 import * as attachments from './service.js';
 
+function deadLinkPage() {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Link expired</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f4f5f8;color:#14161c;
+font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:24px;text-align:center}
+.card{max-width:420px;background:#fff;border:1px solid #e3e6ec;border-radius:18px;padding:32px}
+h1{font-size:19px;margin:0 0 8px}p{margin:0;color:#6b7280;font-size:14.5px}</style></head>
+<body><div class="card"><h1>This link has expired</h1>
+<p>File links are valid for 12 hours. Open the conversation in Speedy and download the file from the message again.</p>
+</div></body></html>`;
+}
+
 export const attachmentsRouter = Router();
 
 const upload = multer({
@@ -38,7 +50,14 @@ attachmentsRouter.get(
       userId = session.user.id;
     } else {
       const verified = verifyAttachmentToken(req.params.id, req.query.t);
-      if (!verified) throw unauthorized('Sign in again to view this file');
+      if (!verified) {
+        // Someone pasted or bookmarked a dead link: give them a page they can
+        // act on instead of a wall of JSON.
+        if ((req.get('accept') || '').includes('text/html')) {
+          return res.status(401).type('html').send(deadLinkPage());
+        }
+        throw unauthorized('Sign in again to view this file');
+      }
       userId = verified.userId;
     }
 

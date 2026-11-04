@@ -68,6 +68,38 @@ export async function refreshSession() {
   return refreshInFlight;
 }
 
+/** Fetch an attachment with the bearer token and hand back a blob URL. */
+export async function fetchAttachmentBlob(attachmentId, { retry = true } = {}) {
+  const res = await fetch(`/api/attachments/${attachmentId}`, {
+    credentials: 'same-origin',
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+  });
+  if (res.status === 401 && retry) {
+    await refreshSession();
+    return fetchAttachmentBlob(attachmentId, { retry: false });
+  }
+  if (!res.ok) throw new ApiError(res.status, 'attachment_failed', 'That file could not be loaded');
+  return res.blob();
+}
+
+/**
+ * Save a file through the API instead of navigating to its URL. This keeps the
+ * bearer token in play, so an expired or stripped link in the DOM can never
+ * turn a click into an "unauthorized" page.
+ */
+export async function downloadAttachment(attachment) {
+  const blob = await fetchAttachmentBlob(attachment.id);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = attachment.name || 'download';
+  link.rel = 'noopener';
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
 export async function request(path, options = {}) {
   try {
     return await raw(path, options);

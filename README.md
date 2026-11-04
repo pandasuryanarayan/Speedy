@@ -241,6 +241,17 @@ server {
 }
 ```
 
+### Checking what is deployed
+
+`GET /healthz` returns `{ status, version, uptime, env }`. The version comes from
+`package.json`, so it is the quickest way to confirm which build is actually
+running:
+
+```bash
+curl -s localhost:3000/healthz
+# {"status":"ok","version":"1.0.1","uptime":42,"env":"production"}
+```
+
 ### Backups
 
 Everything lives in `DATA_DIR`: `speedy.db` (+ `-wal`/`-shm`) and `uploads/`. Use

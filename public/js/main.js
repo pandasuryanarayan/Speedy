@@ -1,5 +1,5 @@
 import { h, debounce } from './dom.js';
-import { api, setAccessToken, refreshSession, ApiError } from './api.js';
+import { api, setAccessToken, refreshSession, ApiError, downloadAttachment } from './api.js';
 import { state, setState, subscribe, emit, bumpUnread } from './store.js';
 import { createAuthView } from './ui/auth.js';
 import { createSidebar } from './ui/sidebar.js';
@@ -104,6 +104,7 @@ function buildShell() {
     onBack: closeChat,
     onLoadMore: loadOlder,
     onAttach,
+    onDownload: (attachment) => downloadAttachment(attachment).catch(toastError),
     onCancelAttachment: () => setState({ pendingAttachment: null }),
     onNewChat: newChat,
     onNotify: (message, type) => toast(message, { type }),

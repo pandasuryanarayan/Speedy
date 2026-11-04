@@ -1,6 +1,6 @@
 {
   "name": "speedy-chat",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Speedy - a production-ready WhatsApp-style chat app (Node.js, Socket.IO, SQLite, vanilla ES modules).",
   "type": "module",
@@ -15,7 +15,14 @@
     "test": "node --test --test-concurrency=1 server/tests/",
     "test:watch": "node --test --watch server/tests/"
   },
-  "keywords": ["chat", "whatsapp", "socket.io", "express", "sqlite", "realtime"],
+  "keywords": [
+    "chat",
+    "whatsapp",
+    "socket.io",
+    "express",
+    "sqlite",
+    "realtime"
+  ],
   "author": "Suryanarayan Panda",
   "license": "Apache-2.0",
   "dependencies": {
