@@ -4,11 +4,6 @@ A complete, self-hosted WhatsApp-style messenger: real-time 1:1 and group chat, 
 delivery/read receipts, typing indicators, presence, reactions, edits and deletes — built with a
 small, boring, well-understood stack and hardened with modern security defaults.
 
-This is a ground-up rebuild of [pandasuryanarayan/Chat-App-like-WhatsApp](https://github.com/pandasuryanarayan/Chat-App-like-WhatsApp),
-the original PHP/MySQL prototype. The old code had no password hashing, string-concatenated SQL,
-no session model and no actual messaging; this version replaces all of it. See
-[What changed](#what-changed-from-the-original) for the full list.
-
 ![Chat, light theme](docs/screenshots/chat-light.png)
 
 | Sign in | Dark theme | Mobile |
@@ -96,7 +91,7 @@ All configuration is environment variables (see `.env.example`).
 
 ## Security
 
-Every issue class from the original project is addressed, and the defaults are the safe ones:
+The defaults are the safe ones, and every control here is deliberate:
 
 - **Passwords**: scrypt (N=32768, r=8, p=1) with per-user salt, parameters embedded in the hash so
   they can be upgraded. Constant-time comparison. Dummy hashing on unknown users to defeat timing
@@ -259,25 +254,6 @@ Everything lives in `DATA_DIR`: `speedy.db` (+ `-wal`/`-shm`) and `uploads/`. Us
 alongside it. Backups are still encrypted for message bodies, but treat them as sensitive — the
 keys are in your environment.
 
-## What changed from the original
-
-The original repository was a 2019-era college project: `index.html`, `signin.php`, `chats.php`,
-`chatDetails.php`, plus a few CSS/JS files. It is not runnable as a messenger and is unsafe by
-default. This rebuild:
-
-| Original | Now |
-| --- | --- |
-| Passwords stored/compared in plain text | scrypt hashing, lockout, timing-safe comparison |
-| `"SELECT ... WHERE moNo = $number"` string interpolation | Parameterized statements everywhere |
-| `session_start()` with no regeneration or expiry | JWT + rotating refresh tokens, revocable sessions, device list |
-| No input validation, `$_POST` trusted directly | Zod schemas, 422 with field-level errors |
-| Messages rendered into HTML (XSS) | Text-node rendering only, strict CSP |
-| No rate limiting, no CSRF protection | Per-IP and per-account limits, origin checks, CSRF token |
-| Polling/`setInterval` chat refresh | Socket.IO rooms with acks and reconnection |
-| No groups, receipts, files, search, presence | All implemented |
-| Hard-coded `localhost` DB credentials | Environment configuration, no secrets in code |
-| No tests, no migrations, no logging | 14 API tests, versioned migrations, structured audit log |
-
 ## Known limitations
 
 - **No end-to-end encryption** (see above). Server-side AES-256-GCM at rest + TLS in transit.
@@ -295,4 +271,4 @@ default. This rebuild:
 
 ## License
 
-Apache-2.0 — same as the original project. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE).
