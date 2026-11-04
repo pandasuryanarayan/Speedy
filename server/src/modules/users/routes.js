@@ -63,6 +63,6 @@ usersRouter.delete(
 usersRouter.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    res.json({ data: { user: await users.getPublicUser(req.params.id) } });
+    res.json({ data: { user: await users.getPublicUser(req.params.id, req.user.id) } });
   }),
 );

@@ -36,29 +36,37 @@ function bearerToken(req) {
 /**
  * Verifies the access token AND that its session has not been revoked, so a
  * logout or a detected refresh-token reuse kills access immediately.
+ * Returns null instead of throwing, so routes can fall back to other schemes.
  */
+export async function authenticateRequest(req) {
+  const token = bearerToken(req);
+  if (!token) return null;
+
+  let claims;
+  try {
+    claims = await verifyAccessToken(token);
+  } catch {
+    return null;
+  }
+
+  const session = await loadSession(claims.sessionId);
+  if (!session.active || session.userId !== claims.userId) return null;
+
+  const user = await get('SELECT * FROM users WHERE id = ?', [claims.userId]);
+  if (!user || user.is_disabled) return null;
+
+  return { user, sessionId: claims.sessionId };
+}
+
 export async function requireAuth(req, res, next) {
   try {
-    const token = bearerToken(req);
-    if (!token) throw unauthorized('Missing access token');
+    const auth = await authenticateRequest(req);
+    if (!auth) throw unauthorized('Session expired');
+    if (auth.user.is_disabled) throw forbidden('This account has been disabled');
 
-    let claims;
-    try {
-      claims = await verifyAccessToken(token);
-    } catch {
-      throw unauthorized('Session expired');
-    }
-
-    const session = await loadSession(claims.sessionId);
-    if (!session.active || session.userId !== claims.userId) throw unauthorized('Session expired');
-
-    const user = await get('SELECT * FROM users WHERE id = ?', [claims.userId]);
-    if (!user) throw unauthorized('Session expired');
-    if (user.is_disabled) throw forbidden('This account has been disabled');
-
-    req.user = user;
-    req.userDTO = toUserDTO(user, { self: true });
-    req.sessionId = claims.sessionId;
+    req.user = auth.user;
+    req.userDTO = toUserDTO(auth.user, { self: true, viewerId: auth.user.id });
+    req.sessionId = auth.sessionId;
     next();
   } catch (err) {
     next(err);

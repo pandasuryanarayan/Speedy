@@ -295,6 +295,25 @@ test('attachments: upload, sniffing and access control', async () => {
   const inChat = await other.api.call(`/api/attachments/${upload.body.attachment.id}`, { token: other.token });
   assert.equal(inChat.status, 200, 'chat members can open shared files');
 
+  // Browsers cannot send an Authorization header on <img>/download links, so the
+  // DTO carries a signed URL. It must work with no header at all...
+  const signed = upload.body.attachment.url;
+  assert.match(signed, /\?t=/, 'attachment url is signed');
+  const viaLink = await fetch(baseUrl + signed);
+  assert.equal(viaLink.status, 200, 'signed link works without a bearer token');
+  assert.equal(viaLink.headers.get('x-content-type-options'), 'nosniff');
+  await viaLink.arrayBuffer();
+
+  // ...but not with a tampered signature, and not without one.
+  const tampered = await fetch(`${baseUrl}${signed.slice(0, -3)}abc`);
+  assert.equal(tampered.status, 401, 'tampered signature is rejected');
+  const unsigned = await fetch(`${baseUrl}/api/attachments/${upload.body.attachment.id}`);
+  assert.equal(unsigned.status, 401, 'unsigned, unauthenticated access is rejected');
+
+  const { signAttachmentUrl } = await import('../src/lib/signed.js');
+  const expired = await fetch(`${baseUrl}/api/attachments/${upload.body.attachment.id}?t=${signAttachmentUrl(upload.body.attachment.id, user.id, -1000)}`);
+  assert.equal(expired.status, 401, 'expired link is rejected');
+
   const stranger = await newUser('mallory');
   const denied = await stranger.api.call(`/api/attachments/${upload.body.attachment.id}`, { token: stranger.token });
   assert.equal(denied.status, 403, 'outsiders cannot open files');

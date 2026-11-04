@@ -95,11 +95,12 @@ async function hydrate(rows, viewerId, chatId) {
       },
       {
         sender: senderMap.get(row.sender_id) ?? null,
-        attachment: isDeleted ? null : toAttachmentDTO(attachmentMap.get(row.attachment_id)),
+        attachment: isDeleted ? null : toAttachmentDTO(attachmentMap.get(row.attachment_id), viewerId),
         replyTo: replyMap.get(row.reply_to_id) ?? null,
         reactions: reactionMap.get(row.id) ?? [],
         receipts: { delivered: entry.delivered, read: entry.read, total: others, status },
       },
+      viewerId,
     );
   });
 }

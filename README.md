@@ -116,7 +116,9 @@ Every issue class from the original project is addressed, and the defaults are t
 - **Uploads**: never trust the client's `Content-Type` or filename — MIME is derived from magic
   bytes, names are stripped of path components and control characters, files get random names and
   are stored outside the web root, served only to chat members with
-  `Content-Security-Policy: sandbox` and `Content-Disposition` set.
+  `Content-Security-Policy: sandbox` and `Content-Disposition` set. Browser-facing
+  URLs carry a short-lived HMAC signature bound to the viewer, so `<img>` and
+  download links work without weakening the authorization check.
 - **Authorization**: every chat read/write checks membership; every message mutation checks
   authorship; every group action checks role. Covered by tests.
 - **Data at rest**: message bodies and edits are AES-256-GCM encrypted in SQLite with a key from the

@@ -35,7 +35,7 @@ async function issueTokens(user, session, { ip, userAgent } = {}) {
     accessToken,
     refreshToken: session.refreshToken,
     expiresIn: config.accessTokenTtl,
-    user: toUserDTO(user, { self: true }),
+    user: toUserDTO(user, { self: true, viewerId: user.id }),
     sessionId: session.sessionId,
   };
 }

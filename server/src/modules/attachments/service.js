@@ -37,7 +37,7 @@ export async function storeUpload({ userId, file }) {
   );
 
   const row = await get('SELECT * FROM attachments WHERE id = ?', [id]);
-  return toAttachmentDTO(row);
+  return toAttachmentDTO(row, userId);
 }
 
 export async function getAttachmentForUser(attachmentId, userId) {

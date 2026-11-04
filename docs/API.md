@@ -122,6 +122,12 @@ downloaded rather than rendered.
 ### GET /attachments/:id
 Streams the file to the owner, chat members, or anyone for avatars.
 
+Accepts **either** an `Authorization: Bearer` header **or** the signed query
+string that attachment DTOs carry (`?t=<userId>.<expiry>.<hmac>`, valid 12 h,
+bound to that user). The signed form exists because `<img src>` and download
+links cannot send headers; it grants nothing beyond what that user could already
+read — the membership check still runs.
+
 ## WebSocket
 
 Connect to `/socket.io` with `auth: { token: <accessToken> }`.

@@ -17,13 +17,13 @@ export async function searchUsers(query, selfId, limit = 10) {
      LIMIT ?`,
     [selfId, needle, needle, selfId, needle, limit],
   );
-  return rows.map((r) => toUserDTO(r));
+  return rows.map((r) => toUserDTO(r, { viewerId: selfId }));
 }
 
-export async function getPublicUser(id) {
+export async function getPublicUser(id, viewerId = null) {
   const row = await get(`SELECT ${PUBLIC_COLUMNS} FROM users WHERE id = ? AND is_disabled = 0`, [id]);
   if (!row) throw notFound('User not found');
-  return toUserDTO(row);
+  return toUserDTO(row, { viewerId });
 }
 
 export async function updateProfile(userId, { displayName, about }) {
@@ -42,7 +42,7 @@ export async function updateProfile(userId, { displayName, about }) {
   args.push(Date.now(), userId);
   await run(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`, args);
   const row = await get('SELECT * FROM users WHERE id = ?', [userId]);
-  return toUserDTO(row, { self: true });
+  return toUserDTO(row, { self: true, viewerId: userId });
 }
 
 export async function setAvatar(userId, attachmentId) {
@@ -50,7 +50,7 @@ export async function setAvatar(userId, attachmentId) {
   if (!attachment) throw notFound('Upload not found');
   await run('UPDATE users SET avatar_attachment_id = ?, updated_at = ? WHERE id = ?', [attachmentId, Date.now(), userId]);
   const row = await get('SELECT * FROM users WHERE id = ?', [userId]);
-  return toUserDTO(row, { self: true });
+  return toUserDTO(row, { self: true, viewerId: userId });
 }
 
 export async function blockUser(userId, targetId, req) {
@@ -74,7 +74,7 @@ export async function listBlocked(userId) {
      WHERE b.blocker_id = ? ORDER BY b.created_at DESC`,
     [userId],
   );
-  return rows.map((r) => ({ ...toUserDTO(r), blockedAt: r.created_at }));
+  return rows.map((r) => ({ ...toUserDTO(r, { viewerId: userId }), blockedAt: r.created_at }));
 }
 
 export async function isBlockedBetween(a, b) {

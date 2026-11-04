@@ -38,7 +38,7 @@ export async function directPeer(chatId, userId) {
      WHERE cm.chat_id = ? AND cm.user_id != ? LIMIT 1`,
     [chatId, userId],
   );
-  return row ? toUserDTO(row) : null;
+  return row ? toUserDTO(row, { viewerId: userId }) : null;
 }
 
 function previewOf(chatRow) {
@@ -85,7 +85,7 @@ export async function listChats(userId) {
   const byChat = new Map();
   for (const m of members) {
     if (!byChat.has(m.chat_id)) byChat.set(m.chat_id, []);
-    byChat.get(m.chat_id).push(toUserDTO(m));
+    byChat.get(m.chat_id).push(toUserDTO(m, { viewerId: userId }));
   }
 
   const senderIds = [...new Set(chats.map((c) => c.last_sender).filter(Boolean))];
@@ -102,7 +102,7 @@ export async function listChats(userId) {
       id: c.id,
       type: c.type,
       title: c.type === 'group' ? c.title : peer?.displayName || 'Unknown',
-      avatarUrl: c.type === 'group' ? attachmentUrl(c.avatar_attachment_id) : peer?.avatarUrl ?? null,
+      avatarUrl: c.type === 'group' ? attachmentUrl(c.avatar_attachment_id, userId) : peer?.avatarUrl ?? null,
       peer,
       members: chatMembers,
       role: c.role,
@@ -135,14 +135,14 @@ export async function getChatDetail(userId, chatId) {
      WHERE cm.chat_id = ? ORDER BY CASE cm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, u.display_name`,
     [chatId],
   );
-  const members = rows.map((r) => ({ ...toUserDTO(r), role: r.role, joinedAt: r.joined_at, muted: Boolean(r.muted) }));
+  const members = rows.map((r) => ({ ...toUserDTO(r, { viewerId: userId }), role: r.role, joinedAt: r.joined_at, muted: Boolean(r.muted) }));
   const peer = chat.type === 'direct' ? members.find((m) => m.id !== userId) ?? null : null;
 
   return {
     id: chat.id,
     type: chat.type,
     title: chat.type === 'group' ? chat.title : peer?.displayName || 'Unknown',
-    avatarUrl: chat.type === 'group' ? attachmentUrl(chat.avatar_attachment_id) : peer?.avatarUrl ?? null,
+    avatarUrl: chat.type === 'group' ? attachmentUrl(chat.avatar_attachment_id, userId) : peer?.avatarUrl ?? null,
     peer,
     members,
     myRole: member.role,

@@ -62,6 +62,14 @@ layer (put a CDN/WAF in front).
 | Upload | Own attachment only; can only send attachments you uploaded |
 | Download attachment | Owner, a member of a chat where it is used, or it is someone's avatar |
 
+Attachment URLs handed to the browser carry `?t=<userId>.<expiry>.<hmac>`: an
+HMAC-SHA256 signature over the attachment id, the viewer's id and an expiry,
+keyed from `JWT_SECRET` and valid for 12 hours. `<img>` and download links cannot
+send an `Authorization` header, so this is what makes them work; the signature
+only identifies *who is asking*, and the normal membership check still decides
+whether that user may read the file. Tampered, unsigned or expired links get a
+401 (covered by tests).
+
 All of these are exercised by `server/tests/api.test.js`.
 
 ### Input handling
