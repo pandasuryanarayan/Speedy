@@ -158,15 +158,24 @@ export function createChatPane(handlers) {
       );
     }
 
-    const actions = h(
-      'div',
-      { class: 'msg-actions' },
-      h('button', { class: 'icon-btn', 'aria-label': 'React', title: 'React', html: icon('smile'), onclick: (e) => openReactionMenu(e.currentTarget, message) }),
-      h('button', { class: 'icon-btn', 'aria-label': 'Reply', title: 'Reply', html: icon('reply'), onclick: () => handlers.onReply(message) }),
-      h('button', { class: 'icon-btn', 'aria-label': 'More', title: 'More', html: icon('more'), onclick: (e) => openMessageMenu(e.currentTarget, message, mine) }),
-    );
+    if (!message.deletedAt) {
+      const metaEl = bubble.querySelector('.bubble-meta');
+      metaEl?.append(
+        h('button', {
+          type: 'button',
+          class: 'bubble-menu-btn',
+          'aria-label': 'Message actions',
+          title: 'Message actions',
+          html: icon('more'),
+          onclick: (event) => {
+            event.stopPropagation();
+            openMessageMenu(event.currentTarget, message, mine);
+          },
+        }),
+      );
+    }
 
-    node.append(group, actions);
+    node.append(group);
     return node;
   }
 
@@ -225,12 +234,14 @@ export function createChatPane(handlers) {
       },
     });
 
+    // A long chat name would wrap the placeholder and clip it, so fall back to "Message".
+    const placeholder = chat.title.length > 22 ? 'Message' : `Message ${chat.title}`;
     const textarea = h('textarea', {
       class: 'composer-input',
-      placeholder: `Message ${chat.type === 'group' ? chat.title : chat.title}`,
+      placeholder,
       rows: '1',
       maxlength: '4000',
-      'aria-label': 'Message',
+      'aria-label': `Message ${chat.title}`,
     });
 
     textarea.addEventListener('input', () => {
@@ -340,7 +351,9 @@ export function createChatPane(handlers) {
     document.querySelectorAll('.menu').forEach((m) => m.remove());
   }
   document.addEventListener('click', (e) => {
-    if (!e.target.closest('.menu')) closeMenus();
+    const target = e.target;
+    if (target instanceof Element && (target.closest('.menu') || target.closest('.bubble-menu-btn'))) return;
+    closeMenus();
   });
   document.addEventListener('scroll', closeMenus, true);
 
@@ -358,18 +371,30 @@ export function createChatPane(handlers) {
     return menu;
   }
 
-  function openReactionMenu(anchor, message) {
-    openMenu(
-      anchor,
-      QUICK_EMOJI.map((emoji) =>
-        h('button', { type: 'button', text: emoji, onclick: () => { closeMenus(); handlers.onReact(message, emoji); } }),
-      ),
-    );
-    document.querySelector('.menu')?.classList.add('menu-emoji');
-  }
-
   function openMessageMenu(anchor, message, mine) {
     const items = [];
+
+    if (!message.deletedAt) {
+      items.push(
+        h(
+          'div',
+          { class: 'menu-emoji' },
+          ...QUICK_EMOJI.map((emoji) =>
+            h('button', {
+              type: 'button',
+              text: emoji,
+              title: `React with ${emoji}`,
+              onclick: () => {
+                closeMenus();
+                handlers.onReact(message, emoji);
+              },
+            }),
+          ),
+        ),
+        h('div', { class: 'menu-sep' }),
+      );
+    }
+
     items.push(
       h('button', {
         type: 'button',
