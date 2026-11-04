@@ -10,7 +10,6 @@ import { toast, toastError } from './ui/toast.js';
 import { connectSocket, emitAsync } from './socket.js';
 
 const root = document.getElementById('root');
-const THEME_KEY = 'speedy.theme';
 const LAST_CHAT_KEY = 'speedy.lastChat';
 
 let sidebar;
@@ -18,31 +17,6 @@ let chatPane;
 let infoPanel;
 let shell;
 let subscribed = false;
-
-/* ------------------------------- theme ------------------------------- */
-const media = window.matchMedia('(prefers-color-scheme: dark)');
-
-function themeSetting() {
-  return localStorage.getItem(THEME_KEY) || 'system';
-}
-
-function applyTheme() {
-  const setting = themeSetting();
-  const resolved = setting === 'system' ? (media.matches ? 'dark' : 'light') : setting;
-  document.documentElement.dataset.theme = resolved;
-  document.documentElement.style.colorScheme = resolved;
-}
-
-function cycleTheme() {
-  const order = ['system', 'light', 'dark'];
-  const next = order[(order.indexOf(themeSetting()) + 1) % order.length];
-  localStorage.setItem(THEME_KEY, next);
-  applyTheme();
-  toast(`Theme: ${next}`);
-}
-
-const themeLabel = () => (themeSetting() === 'system' ? 'System' : themeSetting() === 'dark' ? 'Dark' : 'Light');
-media.addEventListener('change', () => themeSetting() === 'system' && applyTheme());
 
 /* ------------------------------- auth ------------------------------- */
 function showAuth() {
@@ -81,7 +55,6 @@ function buildShell() {
     onNewChat: newChat,
     onNewGroup: newGroup,
     onProfile: openProfile,
-    onTheme: cycleTheme,
     onFilter: (filter) => setState({ filter }),
     onSearch: (query) => setState({ query }),
   });
@@ -390,17 +363,11 @@ async function newGroup() {
 function openProfile() {
   profileModal({
     state,
-    themeLabel,
     onUpdated: (user) => {
       setState({ user: { ...state.user, ...user } });
       refreshChatsSoon();
     },
     onLogout: logout,
-    onTheme: () => {
-      cycleTheme();
-      document.querySelector('.modal-backdrop')?.remove();
-      openProfile();
-    },
   });
 }
 
@@ -504,7 +471,6 @@ async function startApp(user) {
 }
 
 async function boot() {
-  applyTheme();
   root.replaceChildren(h('div', { class: 'chat-empty' }, h('p', { text: 'Loading Speedy…' })));
   if (!document.cookie.includes('speedy_csrf')) return showAuth();
   try {

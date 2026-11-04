@@ -1,7 +1,7 @@
 import { h, avatarEl, icon, fmtListTime, initials, hueFor } from '../dom.js';
 import { activeChat } from '../store.js';
 
-export function createSidebar({ onSelectChat, onNewChat, onNewGroup, onProfile, onTheme, onFilter, onSearch }) {
+export function createSidebar({ onSelectChat, onNewChat, onNewGroup, onProfile, onFilter, onSearch }) {
   const meSlot = h('div', { class: 'me-avatar' });
   const meName = h('div', { class: 'me-name truncate' });
   const meSub = h('div', { class: 'me-sub truncate' });
@@ -33,7 +33,6 @@ export function createSidebar({ onSelectChat, onNewChat, onNewGroup, onProfile, 
       h('button', { class: 'me', onclick: onProfile, 'aria-label': 'Open your profile' }, meSlot, h('div', { class: 'grow' }, meName, meSub)),
       h('button', { class: 'icon-btn', 'aria-label': 'New group', title: 'New group', html: icon('users'), onclick: onNewGroup }),
       h('button', { class: 'icon-btn', 'aria-label': 'New chat', title: 'New chat', html: icon('plus'), onclick: onNewChat }),
-      h('button', { class: 'icon-btn', 'aria-label': 'Toggle theme', title: 'Toggle theme', html: icon('moon'), onclick: onTheme }),
     ),
     h('div', { class: 'search-wrap' }, h('span', { html: icon('search') }), searchInput),
     h('div', { class: 'filters' }, ...chips),

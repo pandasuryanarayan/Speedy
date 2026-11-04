@@ -4,11 +4,11 @@ A complete, self-hosted WhatsApp-style messenger: real-time 1:1 and group chat, 
 delivery/read receipts, typing indicators, presence, reactions, edits and deletes — built with a
 small, boring, well-understood stack and hardened with modern security defaults.
 
-![Chat, light theme](docs/screenshots/chat-light.png)
+![Speedy chat](docs/screenshots/chat.png)
 
-| Sign in | Dark theme | Mobile |
+| Sign in | Group chat | Mobile |
 | --- | --- | --- |
-| ![Sign in](docs/screenshots/sign-in.png) | ![Dark](docs/screenshots/chat-dark.png) | ![Mobile](docs/screenshots/mobile.png) |
+| ![Sign in](docs/screenshots/sign-in.png) | ![Group chat](docs/screenshots/group.png) | ![Mobile](docs/screenshots/mobile.png) |
 
 ---
 
@@ -33,7 +33,7 @@ small, boring, well-understood stack and hardened with modern security defaults.
 
 **Product quality**
 - Responsive layout (desktop 3-pane, mobile full-screen with slide transitions)
-- Light / dark / follow-system themes, remembered per device
+- One indigo brand theme applied across every screen, no theme switching to manage
 - Keyboard shortcuts (`Ctrl/⌘+K` search, `Ctrl/⌘+N` new chat, `Esc` closes panels)
 - Accessible markup: focus states, ARIA labels, reduced-motion support
 - Optimistic sending with retry, offline detection, graceful reconnection
@@ -147,7 +147,7 @@ Full threat model, control-by-control mapping and known limitations: **[docs/SEC
 │   └── tests/api.test.js       # 14 API tests: auth, authz, receipts, uploads, CSRF, ...
 ├── public/
 │   ├── index.html              # single page shell
-│   ├── css/app.css             # design tokens, light/dark themes, responsive layout
+│   ├── css/app.css             # design tokens, brand theme, responsive layout
 │   └── js/                     # api, socket, store, dom helpers, ui/{auth,sidebar,chat,info,modals}
 ├── docs/                       # SECURITY.md, API.md, ARCHITECTURE.md, screenshots
 ├── Dockerfile / docker-compose.yml

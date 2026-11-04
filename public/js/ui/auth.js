@@ -82,7 +82,7 @@ export function createAuthView({ onAuthenticated }) {
         h('p', { text: 'A fast, private messenger built for teams and friends — real time, end to end in your browser, hardened by default.' }),
         h('ul', { class: 'auth-points' }, ...FEATURES.map((f) => h('li', {}, h('span', { html: icon('check') }), f))),
       ),
-      h('div', { class: 'auth-foot', text: 'Speedy · MIT licensed · self-hosted' }),
+      h('div', { class: 'auth-foot', text: 'Speedy · Apache-2.0 · self-hosted' }),
     ),
     h(
       'section',

@@ -35,7 +35,7 @@ export function openModal({ title, body, footer, wide = false, onClose }) {
   document.body.append(backdrop);
   document.addEventListener('keydown', onKey);
   openCount += 1;
-  setTimeout(() => modal.querySelector('input, textarea, button')?.focus(), 30);
+  setTimeout(() => (modal.querySelector('input, textarea') || modal.querySelector('.modal-foot .btn-primary') || modal.querySelector('button'))?.focus(), 30);
   return { close, modal };
 }
 
@@ -223,7 +223,7 @@ export function lightbox(src) {
 
 /* ------------------------------ profile ------------------------------ */
 
-export function profileModal({ state, onUpdated, onLogout, onTheme, themeLabel }) {
+export function profileModal({ state, onUpdated, onLogout }) {
   const nameInput = h('input', { class: 'input', value: state.user.displayName, maxlength: '48' });
   const aboutInput = h('input', {
     class: 'input',
@@ -291,17 +291,6 @@ export function profileModal({ state, onUpdated, onLogout, onTheme, themeLabel }
       h('label', { class: 'field' }, h('span', { text: 'Display name' }), nameInput),
       h('label', { class: 'field' }, h('span', { text: 'About' }), aboutInput),
       errorEl,
-      h(
-        'div',
-        { class: 'info-section' },
-        h('h5', { text: 'Preferences' }),
-        h(
-          'div',
-          { class: 'info-row' },
-          h('span', { class: 'grow' }, h('span', { class: 'name', text: 'Appearance' }), h('span', { class: 'sub', text: 'Light, dark or follow your system' })),
-          h('button', { class: 'btn btn-sm', text: themeLabel(), onclick: () => onTheme?.() }),
-        ),
-      ),
       h(
         'div',
         { class: 'info-section' },
