@@ -36,21 +36,25 @@ policy, and no managed service in the dependency chain.
 
 ## Screenshots
 
+Both themes are built from the same design tokens — the layout, type scale and spacing are identical,
+so switching only changes surface and ink.
+
 ### Desktop
 
-| Sign in | Chats |
-| --- | --- |
-| ![Sign in](docs/screenshots/desktop-sign-in.png) | ![Chat list](docs/screenshots/desktop-chats.png) |
-
-| Conversation | Group chat | Profile and security |
+| Screen | Light | Dark |
 | --- | --- | --- |
-| ![Conversation](docs/screenshots/desktop-conversation.png) | ![Group chat](docs/screenshots/desktop-group.png) | ![Profile](docs/screenshots/desktop-profile.png) |
+| Sign in | ![Sign in, light](docs/screenshots/desktop-sign-in.png) | ![Sign in, dark](docs/screenshots/desktop-sign-in-dark.png) |
+| Chats | ![Chat list, light](docs/screenshots/desktop-chats.png) | ![Chat list, dark](docs/screenshots/desktop-chats-dark.png) |
+| Conversation | ![Conversation, light](docs/screenshots/desktop-conversation.png) | ![Conversation, dark](docs/screenshots/desktop-conversation-dark.png) |
+| Group chat | ![Group chat, light](docs/screenshots/desktop-group.png) | ![Group chat, dark](docs/screenshots/desktop-group-dark.png) |
+| Profile | ![Profile, light](docs/screenshots/desktop-profile.png) | ![Profile, dark](docs/screenshots/desktop-profile-dark.png) |
 
 ### Mobile
 
-| Chats | Conversation |
-| --- | --- |
-| ![Mobile chat list](docs/screenshots/mobile-chats.png) | ![Mobile conversation](docs/screenshots/mobile-conversation.png) |
+| Screen | Light | Dark |
+| --- | --- | --- |
+| Chats | ![Mobile chat list, light](docs/screenshots/mobile-chats.png) | ![Mobile chat list, dark](docs/screenshots/mobile-chats-dark.png) |
+| Conversation | ![Mobile conversation, light](docs/screenshots/mobile-conversation.png) | ![Mobile conversation, dark](docs/screenshots/mobile-conversation-dark.png) |
 
 ## Capabilities
 
