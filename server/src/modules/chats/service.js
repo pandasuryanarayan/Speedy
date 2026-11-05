@@ -65,13 +65,17 @@ export async function listChats(userId) {
             lm.created_at AS last_at, lm.sender_id AS last_sender, lm.deleted_at AS last_deleted,
             (SELECT COUNT(*) FROM messages m
               WHERE m.chat_id = c.id AND m.seq > cm.last_read_seq
-                AND m.sender_id != ? AND m.deleted_at IS NULL) AS unread
+                AND m.sender_id != ? AND m.deleted_at IS NULL
+                AND m.id NOT IN (SELECT message_id FROM message_hides WHERE user_id = ?)) AS unread
      FROM chat_members cm
      JOIN chats c ON c.id = cm.chat_id
-     LEFT JOIN messages lm ON lm.id = (SELECT id FROM messages WHERE chat_id = c.id ORDER BY seq DESC LIMIT 1)
+     LEFT JOIN messages lm ON lm.id = (
+       SELECT id FROM messages WHERE chat_id = c.id
+         AND id NOT IN (SELECT message_id FROM message_hides WHERE user_id = ?)
+       ORDER BY seq DESC LIMIT 1)
      WHERE cm.user_id = ?
      ORDER BY cm.pinned DESC, COALESCE(lm.created_at, c.created_at) DESC`,
-    [userId, userId],
+    [userId, userId, userId, userId],
   );
 
   if (!chats.length) return [];

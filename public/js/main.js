@@ -7,10 +7,12 @@ import { createChatPane } from './ui/chat.js';
 import { createInfoPanel } from './ui/info.js';
 import {
   profileModal, peoplePicker, promptDialog, confirmDialog, groupInfoModal,
-  anyModalOpen, unlockModal, securityModal, adminModal, reportModal,
+  anyModalOpen, unlockModal, securityModal, adminModal, reportModal, galleryModal, lightbox,
 } from './ui/modals.js';
 import { toast, toastError } from './ui/toast.js';
 import { connectSocket, emitAsync } from './socket.js';
+import * as outbox from './queue.js';
+import * as theme from './theme.js';
 
 const root = document.getElementById('root');
 const LAST_CHAT_KEY = 'speedy.lastChat';
@@ -85,6 +87,8 @@ function buildShell() {
       if (state.chat) unblockPeer(state.chat);
     },
     onReport: reportMessage,
+    onHide: hideMessageForMe,
+    onGallery: openGallery,
     onCancelAttachment: () => setState({ pendingAttachment: null }),
     onNewChat: newChat,
     onNotify: (message, type) => toast(message, { type }),
@@ -268,21 +272,83 @@ async function sendMessage({ text, attachment }) {
   setState({ messages: [...state.messages, optimistic], replyTo: null, pendingAttachment: null });
   chatPane.scrollToBottom();
 
-  let result = await emitAsync('message:send', payload);
-  if (!result.ok && result.error?.code === 'offline') {
-    try {
-      const data = await api.post(`/api/chats/${chatId}/messages`, payload, { headers: chatHeaders(chatId) });
-      result = { ok: true, message: data.message };
-    } catch (err) {
-      result = { ok: false, error: { message: err.message } };
-    }
-  }
+  const result = await deliver(payload);
 
   if (result.ok && result.message) {
     replaceOptimistic(clientId, result.message);
-  } else {
-    setState({ messages: state.messages.filter((m) => m.clientId !== clientId) });
-    toast(result.error?.message || 'Message failed to send', { type: 'error' });
+    return;
+  }
+
+  if (result.retryable) {
+    // Keep it on screen as "waiting", park it in the outbox and let the
+    // reconnect handler replay it.
+    outbox.enqueue(payload);
+    setState({
+      messages: state.messages.map((m) => (m.clientId === clientId ? { ...m, pending: true } : m)),
+    });
+    toast('Offline — queued to send when you reconnect');
+    return;
+  }
+
+  setState({ messages: state.messages.filter((m) => m.clientId !== clientId) });
+  toast(result.error?.message || 'Message failed to send', { type: 'error' });
+}
+
+/**
+ * One attempt at delivery. The socket is preferred; REST is the fallback when
+ * the socket is down but the network is up.
+ */
+async function deliver(payload) {
+  const socketResult = await emitAsync('message:send', payload);
+  if (socketResult.ok) return socketResult;
+
+  const code = socketResult.error?.code;
+  if (code !== 'offline' && code !== 'timeout') {
+    // A real rejection (validation, permissions, locked chat) - retrying is pointless.
+    return { ok: false, retryable: false, error: socketResult.error };
+  }
+
+  try {
+    const data = await api.post(`/api/chats/${payload.chatId}/messages`, payload, {
+      headers: chatHeaders(payload.chatId),
+    });
+    return { ok: true, message: data.message };
+  } catch (err) {
+    const retryable = err instanceof ApiError ? err.status >= 500 || err.status === 429 || err.status === 0 : true;
+    return { ok: false, retryable, error: { message: err.message } };
+  }
+}
+
+/** Replays the outbox in order; called on reconnect and on `online`. */
+let flushing = false;
+async function flushOutbox() {
+  if (flushing || !outbox.size()) return;
+  flushing = true;
+  try {
+    for (const item of outbox.all()) {
+      const result = await deliver(item);
+      if (result.ok && result.message) {
+        outbox.dequeue(item.clientId);
+        replaceOptimistic(item.clientId, result.message);
+        continue;
+      }
+      if (!result.retryable) {
+        outbox.dequeue(item.clientId);
+        setState({ messages: state.messages.filter((m) => m.clientId !== item.clientId) });
+        toast(result.error?.message || 'A queued message could not be sent', { type: 'error' });
+        continue;
+      }
+      if (outbox.bump(item.clientId)) {
+        outbox.dequeue(item.clientId);
+        setState({
+          messages: state.messages.map((m) => (m.clientId === item.clientId ? { ...m, pending: false, failed: true } : m)),
+        });
+        toast('A queued message could not be delivered', { type: 'error' });
+      }
+      break; // still offline - stop and wait for the next reconnect
+    }
+  } finally {
+    flushing = false;
   }
 }
 
@@ -448,6 +514,26 @@ async function toggleLock(chat) {
   }
 }
 
+async function hideMessageForMe(message) {
+  try {
+    await api.post(`/api/messages/${message.id}/hide`, {});
+    setState({ messages: state.messages.filter((m) => m.id !== message.id) });
+    toast('Message removed for you');
+  } catch (err) {
+    toastError(err);
+  }
+}
+
+function openGallery() {
+  if (!state.chat) return;
+  galleryModal({
+    chat: state.chat,
+    unlockHeaders: chatHeaders(state.chat.id),
+    onOpenImage: (url) => lightbox(url),
+    onDownload: (attachment) => downloadAttachment(attachment).catch(toastError),
+  });
+}
+
 async function reportMessage(message) {
   const choice = await reportModal({ message });
   if (!choice) return;
@@ -494,6 +580,11 @@ async function enableNotifications() {
   }
 }
 
+function cycleTheme() {
+  const next = theme.cycle();
+  toast(`Theme: ${next}`);
+}
+
 function openProfile() {
   profileModal({
     state,
@@ -514,6 +605,8 @@ function openProfile() {
       document.querySelector('.modal-backdrop')?.remove();
       adminModal({ state });
     },
+    onTheme: cycleTheme,
+    themeLabel: theme.label,
   });
 }
 
@@ -529,6 +622,7 @@ function wireSocket(socket) {
   socket.on('connect', () => {
     setState({ socketReady: true });
     if (state.activeChatId) socket.emit('chat:join', { chatId: state.activeChatId });
+    flushOutbox();
   });
   socket.on('disconnect', () => setState({ socketReady: false }));
 
@@ -612,11 +706,16 @@ async function startApp(user) {
   const socket = connectSocket();
   wireSocket(socket);
   await refreshChats();
+  if (outbox.size()) {
+    toast(`${outbox.size()} message${outbox.size() === 1 ? '' : 's'} waiting to send`, { timeout: 4000 });
+    flushOutbox();
+  }
   const last = localStorage.getItem(LAST_CHAT_KEY);
   if (last && state.chats.some((c) => c.id === last)) openChat(last);
 }
 
 async function boot() {
+  theme.apply();
   root.replaceChildren(h('div', { class: 'chat-empty' }, h('p', { text: 'Loading Speedy…' })));
   if (!document.cookie.includes('speedy_csrf')) return showAuth();
   try {
@@ -646,7 +745,10 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-window.addEventListener('online', () => toast('Back online'));
+window.addEventListener('online', () => {
+  toast('Back online');
+  flushOutbox();
+});
 window.addEventListener('offline', () => toast('You are offline — messages will retry', { type: 'error' }));
 
 boot();

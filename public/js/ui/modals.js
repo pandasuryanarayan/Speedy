@@ -1,4 +1,4 @@
-import { h, avatarEl, icon, debounce } from '../dom.js';
+import { h, avatarEl, icon, debounce, fmtBytes } from '../dom.js';
 import { api, exportMyData } from '../api.js';
 import { toast, toastError } from './toast.js';
 
@@ -290,7 +290,7 @@ export function lightbox(src) {
 
 /* ------------------------------ profile ------------------------------ */
 
-export function profileModal({ state, onUpdated, onLogout, onNotifications, onSecurity, onAdmin }) {
+export function profileModal({ state, onUpdated, onLogout, onNotifications, onSecurity, onAdmin, onTheme, themeLabel }) {
   const nameInput = h('input', { class: 'input', value: state.user.displayName, maxlength: '48' });
   const aboutInput = h('input', {
     class: 'input',
@@ -358,6 +358,20 @@ export function profileModal({ state, onUpdated, onLogout, onNotifications, onSe
       h('label', { class: 'field' }, h('span', { text: 'Display name' }), nameInput),
       h('label', { class: 'field' }, h('span', { text: 'About' }), aboutInput),
       errorEl,
+      h(
+        'div',
+        { class: 'info-section' },
+        h('h5', { text: 'Preferences' }),
+        h(
+          'div',
+          { class: 'info-row' },
+          h('span', { class: 'grow' },
+            h('span', { class: 'name', text: 'Appearance' }),
+            h('span', { class: 'sub', text: 'Light, dark, or follow your system' }),
+          ),
+          h('button', { class: 'btn btn-sm', text: themeLabel ? themeLabel() : 'System', onclick: () => { onTheme?.(); ref.close(); profileModal({ state, onUpdated, onLogout, onNotifications, onSecurity, onAdmin, onTheme, themeLabel }); } }),
+        ),
+      ),
       h(
         'div',
         { class: 'info-section' },
@@ -619,6 +633,96 @@ export function adminModal({ state }) {
     }
   };
 
+  load();
+  return ref;
+}
+
+/** Shared media in a conversation: images as a grid, files as a list. */
+export function galleryModal({ chat, onOpenImage, onDownload, unlockHeaders }) {
+  let tab = 'image';
+  const body = h('div');
+  const tabs = h('div', { class: 'gallery-tabs' });
+  const panel = h('div', { class: 'modal-lead muted', text: 'Loading…' });
+
+  const ref = openModal({
+    title: `Shared in ${chat.title}`,
+    body: [tabs, panel],
+    wide: true,
+    footer: [h('button', { class: 'btn btn-primary', text: 'Done', onclick: () => ref.close() })],
+  });
+
+  const renderTabs = () => {
+    tabs.replaceChildren(
+      ...[
+        ['image', 'Photos'],
+        ['file', 'Files'],
+      ].map(([value, label]) =>
+        h('button', {
+          class: 'chip',
+          'aria-pressed': String(tab === value),
+          text: label,
+          onclick: () => {
+            if (tab === value) return;
+            tab = value;
+            renderTabs();
+            load();
+          },
+        }),
+      ),
+    );
+  };
+
+  const load = async () => {
+    panel.replaceChildren(h('p', { class: 'muted', text: 'Loading…' }));
+    try {
+      const data = await api.get(`/api/chats/${chat.id}/media?type=${tab}&limit=60`, { headers: unlockHeaders });
+      const items = data.items || [];
+      if (!items.length) {
+        panel.replaceChildren(
+          h('p', { class: 'gallery-empty', text: tab === 'image' ? 'No photos shared yet' : 'No files shared yet' }),
+        );
+        return;
+      }
+
+      if (tab === 'image') {
+        panel.replaceChildren(
+          h(
+            'div',
+            { class: 'gallery' },
+            ...items.map((item) =>
+              h(
+                'button',
+                { class: 'gallery-item', title: item.attachment.name, onclick: () => onOpenImage(item.attachment.url) },
+                h('img', { src: item.attachment.url, alt: item.attachment.name, loading: 'lazy' }),
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+
+      panel.replaceChildren(
+        ...items.map((item) =>
+          h(
+            'button',
+            { class: 'file-row', onclick: () => onDownload(item.attachment) },
+            h('span', { class: 'file-icon', html: icon('file') }),
+            h(
+              'span',
+              { class: 'meta' },
+              h('span', { class: 'name', text: item.attachment.name }),
+              h('span', { class: 'sub', text: `${fmtBytes(item.attachment.size)} · ${new Date(item.createdAt).toLocaleDateString()}` }),
+            ),
+            h('span', { class: 'file-dl', html: icon('download') }),
+          ),
+        ),
+      );
+    } catch (err) {
+      panel.replaceChildren(h('p', { class: 'muted', text: err.message }));
+    }
+  };
+
+  renderTabs();
   load();
   return ref;
 }

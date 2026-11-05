@@ -95,6 +95,13 @@ page from (exclusive).
 ```
 `201` → `{ message }`.
 
+`clientId` makes the send **idempotent**: re-posting the same `clientId` to the same conversation
+returns the original message instead of creating a second one. The offline outbox relies on this when
+it replays a message whose first attempt timed out.
+
+`@username` tokens in a text body are resolved to members of that conversation and returned in
+`mentions` (see the message object).
+
 ### GET /chats/:id/search?q=
 `{ messages: [...] }` — up to 50 matches within the 400 most recent messages.
 
@@ -107,6 +114,22 @@ Marks everything up to `seq` as read for you and updates the sender's receipts.
 ### PATCH /messages/:id · DELETE /messages/:id · POST /messages/:id/reactions
 Edit your own text, delete your own message for everyone, toggle `{ emoji }`.
 
+### POST /messages/:id/hide
+Hides the message **for the calling user only** — it disappears from their history, search results,
+unread counts and the conversation preview, and stays visible to everyone else. Any member can hide
+any message they can see. `200` → `{ id, hidden: true }`.
+
+### GET /chats/:id/media?type=image|file&limit=60
+Shared media for the gallery, newest first:
+
+```json
+{ "items": [ { "messageId": "…", "createdAt": 1793792134720,
+               "attachment": { "id": "…", "name": "pic.png", "mime": "image/png",
+                               "size": 1200, "url": "/api/attachments/…", "isImage": true } } ] }
+```
+
+Locked conversations require the same `X-Chat-Unlock` header as the message endpoints.
+
 ### Message object
 ```json
 {
@@ -116,6 +139,8 @@ Edit your own text, delete your own message for everyone, toggle `{ emoji }`.
   "attachment": { "id": "uuid", "name": "photo.png", "mime": "image/png", "size": 1234, "url": "/api/attachments/…", "isImage": true },
   "replyTo": { "id": "uuid", "senderName": "Bob", "preview": "…", "type": "text" },
   "reactions": [{ "emoji": "🔥", "count": 2, "mine": true }],
+  "mentions": ["uuid-of-mentioned-user"],
+  "mentionsMe": false,
   "receipts": { "delivered": 1, "read": 1, "total": 1, "status": "read" }
 }
 ```

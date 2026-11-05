@@ -74,16 +74,49 @@ export function createChatPane(handlers) {
         h('div', { class: 'who-name', text: chat.title }),
         h('div', { class: `who-sub ${typingUsers.length ? 'typing' : ''}`.trim(), text: sub }),
       ),
+      h('button', { class: 'icon-btn', 'aria-label': 'Shared media', title: 'Shared media', html: icon('image'), onclick: handlers.onGallery }),
       h('button', { class: 'icon-btn', 'aria-label': 'Chat info', html: icon('info'), onclick: handlers.onOpenInfo }),
     );
   }
 
   /* ------------------------------ messages ------------------------------ */
   function tickNode(message, state) {
+    if (message.failed) {
+      return h('span', { class: 'tick failed', html: icon('alert'), title: 'Not sent' });
+    }
+    if (message.pending) {
+      return h('span', { class: 'tick pending', html: icon('clock'), title: 'Waiting to send' });
+    }
     if (message.sender?.id !== state.user.id) return null;
     const status = message.receipts?.status || 'sent';
     if (status === 'sent') return h('span', { class: 'tick', html: icon('check'), title: 'Sent' });
     return h('span', { class: `tick ${status === 'read' ? 'read' : ''}`.trim(), html: icon('checks'), title: status === 'read' ? 'Read' : 'Delivered' });
+  }
+
+  /**
+   * Renders message text with @mentions highlighted. Built from text nodes and
+   * spans - never innerHTML - so message content can never inject markup.
+   */
+  function textWithMentions(message, state) {
+    const members = state.chat?.members || [];
+    const byUsername = new Map(members.map((m) => [m.username.toLowerCase(), m]));
+    const text = message.body || '';
+    if (!text.includes('@') || !byUsername.size) return h('span', { text });
+
+    const fragment = document.createDocumentFragment();
+    const pattern = /@([a-zA-Z0-9._]{3,24})/g;
+    let cursor = 0;
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      const member = byUsername.get(match[1].toLowerCase());
+      if (!member) continue;
+      if (match.index > cursor) fragment.append(document.createTextNode(text.slice(cursor, match.index)));
+      const mine = member.id === state.user.id;
+      fragment.append(h('span', { class: `mention ${mine ? 'mention-me' : ''}`.trim(), text: match[0] }));
+      cursor = match.index + match[0].length;
+    }
+    if (cursor < text.length) fragment.append(document.createTextNode(text.slice(cursor)));
+    return fragment;
   }
 
   function bubbleContent(message, state) {
@@ -127,7 +160,7 @@ export function createChatPane(handlers) {
       );
       if (message.body) parts.push(h('span', { text: message.body }));
     } else {
-      parts.push(h('span', { text: message.body }));
+      parts.push(textWithMentions(message, state));
     }
 
     const meta = h(
@@ -288,9 +321,60 @@ export function createChatPane(handlers) {
       'aria-label': `Message ${chat.title}`,
     });
 
+    const picker = h('div', { class: 'mention-picker hidden' });
+    let pickerQuery = null;
+
+    const closePicker = () => {
+      pickerQuery = null;
+      picker.classList.add('hidden');
+      picker.replaceChildren();
+    };
+
+    const insertMention = (member) => {
+      const value = textarea.value;
+      const caret = textarea.selectionStart ?? value.length;
+      const before = value.slice(0, caret).replace(/@([a-zA-Z0-9._]*)$/, '');
+      const after = value.slice(caret);
+      const token = `@${member.username} `;
+      textarea.value = before + token + after;
+      textarea.focus();
+      textarea.selectionStart = textarea.selectionEnd = (before + token).length;
+      closePicker();
+      textarea.dispatchEvent(new Event('input'));
+    };
+
+    const updatePicker = () => {
+      if (!state.chat || state.chat.type !== 'group') return closePicker();
+      const caret = textarea.selectionStart ?? 0;
+      const before = textarea.value.slice(0, caret);
+      const match = /(?:^|\s)@([a-zA-Z0-9._]{0,24})$/.exec(before);
+      if (!match) return closePicker();
+
+      pickerQuery = match[1].toLowerCase();
+      const candidates = state.chat.members
+        .filter((m) => m.id !== state.user.id)
+        .filter((m) => !pickerQuery || m.username.toLowerCase().includes(pickerQuery) || m.displayName.toLowerCase().includes(pickerQuery))
+        .slice(0, 6);
+
+      if (!candidates.length) return closePicker();
+
+      picker.replaceChildren(
+        ...candidates.map((member) =>
+          h(
+            'button',
+            { type: 'button', 'aria-selected': 'false', onmousedown: (e) => { e.preventDefault(); insertMention(member); } },
+            h('span', { class: 'name', text: member.displayName }),
+            h('span', { class: 'handle', text: `@${member.username}` }),
+          ),
+        ),
+      );
+      picker.classList.remove('hidden');
+    };
+
     textarea.addEventListener('input', () => {
       textarea.style.height = 'auto';
       textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
+      updatePicker();
       if (!typingFlag) {
         typingFlag = true;
         handlers.onTyping(true);
@@ -303,6 +387,18 @@ export function createChatPane(handlers) {
     });
 
     textarea.addEventListener('keydown', (e) => {
+      if (pickerQuery !== null && !picker.classList.contains('hidden')) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          return closePicker();
+        }
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          const first = picker.querySelector('button');
+          if (first) first.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+          return undefined;
+        }
+      }
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         submit();
@@ -369,6 +465,7 @@ export function createChatPane(handlers) {
       );
     }
 
+    rows.push(picker);
     rows.push(emojiBar);
     rows.push(
       h(
@@ -476,6 +573,19 @@ export function createChatPane(handlers) {
           onclick: () => {
             closeMenus();
             handlers.onReport?.(message);
+          },
+        }),
+      );
+    }
+    if (!message.deletedAt) {
+      items.push(
+        h('button', {
+          type: 'button',
+          class: 'danger',
+          html: `${icon('trash')}<span>Delete for me</span>`,
+          onclick: () => {
+            closeMenus();
+            handlers.onHide(message);
           },
         }),
       );

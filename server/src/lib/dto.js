@@ -47,7 +47,16 @@ export function toAttachmentDTO(row, viewerId = null) {
 }
 
 export function toMessageDTO(row, extras = {}, viewerId = null) {
-  const { sender = null, attachment = null, replyTo = null, reactions = [], receipts = null, clientId } = extras;
+  const {
+    sender = null,
+    attachment = null,
+    replyTo = null,
+    reactions = [],
+    receipts = null,
+    clientId,
+    mentions = [],
+    mentionsMe = false,
+  } = extras;
   return {
     id: row.id,
     chatId: row.chat_id,
@@ -68,6 +77,8 @@ export function toMessageDTO(row, extras = {}, viewerId = null) {
     attachment,
     replyTo,
     reactions,
+    mentions,
+    mentionsMe,
     receipts,
     clientId,
   };

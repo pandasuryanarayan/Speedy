@@ -165,7 +165,7 @@ export function createRealtime(httpServer) {
   });
 
   // Domain events -> socket fan-out
-  bus.on(EVENTS.MESSAGE_NEW, ({ chatId, message, memberIds = [], senderId }) => {
+  bus.on(EVENTS.MESSAGE_NEW, ({ chatId, message, memberIds = [], senderId, mentions = [] }) => {
     io.to(`chat:${chatId}`).emit('message:new', { message });
 
     // Push only to members with no live socket - never wake someone who is
@@ -180,9 +180,10 @@ export function createRealtime(httpServer) {
           : message.type === 'file'
             ? 'Attachment'
             : 'New message';
+    const mentionedOffline = offline.filter((id) => mentions.includes(id));
     void pushToUsers(offline, {
       title: message.sender?.displayName || 'Speedy',
-      body: preview,
+      body: mentionedOffline.length ? `${preview} (mentioned you)` : preview,
       chatId,
       url: '/',
     });

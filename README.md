@@ -77,8 +77,8 @@ disable author) · account enable/disable · audit log with optional Slack-compa
 Web Push notifications (VAPID) · browser-side service worker for delivery.
 
 **Product quality**
-Responsive three-pane desktop layout and full-screen mobile layout · one consistent brand theme with a
-single 1.7-stroke icon set · keyboard shortcuts · accessible markup with focus states and
+Responsive three-pane desktop layout and full-screen mobile layout · light and dark themes built from
+the same tokens (nothing moves when you switch) · one 1.7-stroke icon set · keyboard shortcuts · accessible markup with focus states and
 reduced-motion support · optimistic sending with offline detection and retry.
 
 ## Self-hosting
@@ -395,6 +395,10 @@ Contributions are welcome through pull requests — fork, branch, open a PR agai
 pushes to `main` directly and CI has to be green. The full rules, code style and what tends to be
 accepted are in [CONTRIBUTING.md](CONTRIBUTING.md). Security issues go through the private advisory
 link in [.github/SECURITY.md](.github/SECURITY.md), never a public issue.
+
+## Changelog
+
+Release notes for each version are in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

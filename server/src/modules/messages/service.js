@@ -37,7 +37,7 @@ async function hydrate(rows, viewerId, chatId) {
   const attachmentIds = [...new Set(rows.map((r) => r.attachment_id).filter(Boolean))];
   const replyIds = [...new Set(rows.map((r) => r.reply_to_id).filter(Boolean))];
 
-  const [senders, attachments, reactions, receipts, replies, total] = await Promise.all([
+  const [senders, attachments, reactions, receipts, replies, mentionRows, total] = await Promise.all([
     senderIds.length
       ? all(
           `SELECT id, username, display_name, avatar_attachment_id FROM users WHERE id IN (${senderIds.map(() => '?').join(',')})`,
@@ -64,6 +64,7 @@ async function hydrate(rows, viewerId, chatId) {
           replyIds,
         )
       : [],
+    all(`SELECT message_id, user_id FROM message_mentions WHERE message_id IN (${ph})`, ids),
     memberCount(chatId),
   ]);
 
@@ -74,6 +75,11 @@ async function hydrate(rows, viewerId, chatId) {
   for (const r of reactions) {
     if (!reactionMap.has(r.message_id)) reactionMap.set(r.message_id, []);
     reactionMap.get(r.message_id).push({ emoji: r.emoji, count: Number(r.count), mine: Number(r.mine) === 1 });
+  }
+  const mentionMap = new Map();
+  for (const row of mentionRows) {
+    if (!mentionMap.has(row.message_id)) mentionMap.set(row.message_id, []);
+    mentionMap.get(row.message_id).push(row.user_id);
   }
   const receiptMap = new Map();
   for (const r of receipts) {
@@ -98,6 +104,8 @@ async function hydrate(rows, viewerId, chatId) {
         attachment: isDeleted ? null : toAttachmentDTO(attachmentMap.get(row.attachment_id), viewerId),
         replyTo: replyMap.get(row.reply_to_id) ?? null,
         reactions: reactionMap.get(row.id) ?? [],
+        mentions: mentionMap.get(row.id) ?? [],
+        mentionsMe: (mentionMap.get(row.id) ?? []).includes(viewerId),
         receipts: { delivered: entry.delivered, read: entry.read, total: others, status },
       },
       viewerId,
@@ -118,8 +126,11 @@ export async function listMessages(userId, chatId, { before, limit = config.mess
   const member = await assertMember(chatId, userId);
   assertUnlocked(member, chatId, userId, unlockToken);
   const rows = await all(
-    'SELECT * FROM messages WHERE chat_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?',
-    [chatId, before ?? 2 ** 40, limit],
+    `SELECT * FROM messages
+     WHERE chat_id = ? AND seq < ?
+       AND id NOT IN (SELECT message_id FROM message_hides WHERE user_id = ?)
+     ORDER BY seq DESC LIMIT ?`,
+    [chatId, before ?? 2 ** 40, userId, limit],
   );
   const hydrated = await hydrate(rows, userId, chatId);
   const hasMore = rows.length === limit;
@@ -141,10 +152,39 @@ async function resolveAttachment(userId, attachmentId) {
   return att;
 }
 
+/**
+ * Retries are expected (the client queue re-sends after a dropped connection),
+ * so a send carrying a clientId is idempotent: the existing message is returned
+ * instead of creating a duplicate.
+ */
+async function findByClientId(chatId, clientId) {
+  if (!clientId) return null;
+  return get('SELECT * FROM messages WHERE chat_id = ? AND client_id = ?', [chatId, clientId]);
+}
+
+/** Resolves @username tokens to members of this chat. */
+async function resolveMentions(chatId, body) {
+  if (!body || !body.includes('@')) return [];
+  const usernames = [...new Set([...body.matchAll(/(?:^|[^\w@])@([a-zA-Z0-9._]{3,24})/g)].map((m) => m[1].toLowerCase()))];
+  if (!usernames.length) return [];
+  const rows = await all(
+    `SELECT u.id FROM chat_members cm JOIN users u ON u.id = cm.user_id
+     WHERE cm.chat_id = ? AND u.username_lower IN (${usernames.map(() => '?').join(',')})`,
+    [chatId, ...usernames],
+  );
+  return rows.map((r) => r.id);
+}
+
 export async function sendMessage(userId, input) {
   const { chatId, type = 'text', body, attachmentId, replyToId, clientId, unlockToken } = input;
   const member = await assertMember(chatId, userId);
   assertUnlocked(member, chatId, userId, unlockToken);
+
+  const duplicate = await findByClientId(chatId, clientId);
+  if (duplicate) {
+    const [dto] = await hydrate([duplicate], userId, chatId);
+    return { ...dto, clientId: clientId ?? undefined };
+  }
   const chat = await getChat(chatId);
 
   if (chat.type === 'direct') {
@@ -178,16 +218,26 @@ export async function sendMessage(userId, input) {
   const now = Date.now();
   const messageId = newId();
   const members = await memberIds(chatId);
+  const mentioned = type === 'text' ? await resolveMentions(chatId, text) : [];
 
   const seq = await tx(async (t) => {
     await t.execute({ sql: 'UPDATE chats SET seq = seq + 1, updated_at = ? WHERE id = ?', args: [now, chatId] });
     const res = await t.execute({ sql: 'SELECT seq FROM chats WHERE id = ?', args: [chatId] });
     const nextSeq = Number(res.rows[0].seq);
     await t.execute({
-      sql: `INSERT INTO messages (id, chat_id, seq, sender_id, type, body, attachment_id, reply_to_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [messageId, chatId, nextSeq, userId, type, text ? encryptText(text) : null, attachmentId ?? null, replyToId ?? null, now],
+      sql: `INSERT INTO messages (id, chat_id, seq, sender_id, type, body, attachment_id, reply_to_id, created_at, client_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        messageId, chatId, nextSeq, userId, type, text ? encryptText(text) : null,
+        attachmentId ?? null, replyToId ?? null, now, clientId ?? null,
+      ],
     });
+    for (const mentionedId of mentioned) {
+      await t.execute({
+        sql: 'INSERT OR IGNORE INTO message_mentions (message_id, user_id) VALUES (?, ?)',
+        args: [messageId, mentionedId],
+      });
+    }
     await t.execute({
       sql: `INSERT INTO message_receipts (message_id, user_id, delivered_at)
             SELECT ?, user_id, NULL FROM chat_members WHERE chat_id = ? AND user_id != ?`,
@@ -209,7 +259,7 @@ export async function sendMessage(userId, input) {
   const [dto] = await hydrate([row], userId, chatId);
   const payload = { ...dto, clientId: clientId ?? undefined };
 
-  bus.emit(EVENTS.MESSAGE_NEW, { chatId, memberIds: members, message: payload, senderId: userId });
+  bus.emit(EVENTS.MESSAGE_NEW, { chatId, memberIds: members, message: payload, senderId: userId, mentions: mentioned });
   if (onlineOthers.length) {
     bus.emit(EVENTS.RECEIPT_UPDATE, {
       chatId,
@@ -303,14 +353,52 @@ export async function markRead(userId, chatId, { messageId, seq } = {}) {
   return { chatId, lastReadSeq: targetSeq, readAt: now };
 }
 
+/** Per-user delete: hides the message for this viewer only. */
+export async function hideMessage(userId, messageId) {
+  const row = await get('SELECT * FROM messages WHERE id = ?', [messageId]);
+  if (!row) throw notFound('Message not found');
+  await assertMember(row.chat_id, userId);
+  await run('INSERT OR IGNORE INTO message_hides (message_id, user_id, created_at) VALUES (?, ?, ?)', [
+    messageId,
+    userId,
+    Date.now(),
+  ]);
+  return { id: messageId, hidden: true };
+}
+
+/** Shared media for the gallery: images or files, newest first. */
+export async function listMedia(userId, chatId, { type = 'image', limit = 60, unlockToken } = {}) {
+  const member = await assertMember(chatId, userId);
+  assertUnlocked(member, chatId, userId, unlockToken);
+
+  const clause = type === 'file' ? "a.mime NOT LIKE 'image/%'" : "a.mime LIKE 'image/%'";
+  const rows = await all(
+    `SELECT m.id AS message_id, m.created_at AS message_created_at, a.*
+     FROM messages m JOIN attachments a ON a.id = m.attachment_id
+     WHERE m.chat_id = ? AND m.deleted_at IS NULL AND ${clause}
+       AND m.id NOT IN (SELECT message_id FROM message_hides WHERE user_id = ?)
+     ORDER BY m.seq DESC LIMIT ?`,
+    [chatId, userId, limit],
+  );
+
+  return rows.map((r) => ({
+    messageId: r.message_id,
+    createdAt: r.message_created_at,
+    attachment: toAttachmentDTO(r, userId),
+  }));
+}
+
 /** Search decrypts a bounded window of recent messages (bodies are encrypted at rest). */
 export async function searchMessages(userId, chatId, query, unlockToken) {
   const member = await assertMember(chatId, userId);
   assertUnlocked(member, chatId, userId, unlockToken);
   const needle = query.toLowerCase();
   const rows = await all(
-    'SELECT * FROM messages WHERE chat_id = ? AND type = ? AND deleted_at IS NULL ORDER BY seq DESC LIMIT 400',
-    [chatId, 'text'],
+    `SELECT * FROM messages
+     WHERE chat_id = ? AND type = ? AND deleted_at IS NULL
+       AND id NOT IN (SELECT message_id FROM message_hides WHERE user_id = ?)
+     ORDER BY seq DESC LIMIT 400`,
+    [chatId, 'text', userId],
   );
   const hits = rows.filter((r) => safeDecrypt(r.body).toLowerCase().includes(needle)).slice(0, 50);
   return hydrate(hits, userId, chatId);

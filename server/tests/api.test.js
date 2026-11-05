@@ -741,6 +741,117 @@ test('push endpoints report their configuration state', async () => {
   assert.equal(key.body.publicKey, null);
 });
 
+test('a retried send with the same clientId does not duplicate', async () => {
+  const me = await newUser('retry_a');
+  const other = await newUser('retry_b');
+  const chat = await me.api.call('/api/chats/direct', { method: 'POST', token: me.token, body: { userId: other.user.id } });
+  const chatId = chat.body.chat.id;
+  const clientId = 'client-abc-123';
+
+  const first = await me.api.call(`/api/chats/${chatId}/messages`, {
+    method: 'POST', token: me.token, body: { type: 'text', body: 'sent once', clientId },
+  });
+  const second = await me.api.call(`/api/chats/${chatId}/messages`, {
+    method: 'POST', token: me.token, body: { type: 'text', body: 'sent once', clientId },
+  });
+
+  assert.equal(first.status, 201);
+  assert.equal(second.status, 201);
+  assert.equal(first.body.message.id, second.body.message.id, 'the retry returns the original message');
+
+  const page = await me.api.call(`/api/chats/${chatId}/messages`, { token: me.token });
+  assert.equal(page.body.messages.filter((m) => m.body === 'sent once').length, 1, 'only one copy exists');
+});
+
+test('deleting for me hides a message without affecting anyone else', async () => {
+  const me = await newUser('hide_a');
+  const other = await newUser('hide_b');
+  const chat = await me.api.call('/api/chats/direct', { method: 'POST', token: me.token, body: { userId: other.user.id } });
+  const chatId = chat.body.chat.id;
+  const sent = await other.api.call(`/api/chats/${chatId}/messages`, {
+    method: 'POST', token: other.token, body: { type: 'text', body: 'only for me' },
+  });
+
+  const hidden = await me.api.call(`/api/messages/${sent.body.message.id}/hide`, { method: 'POST', token: me.token, body: {} });
+  assert.equal(hidden.status, 200);
+
+  const mine = await me.api.call(`/api/chats/${chatId}/messages`, { token: me.token });
+  assert.equal(mine.body.messages.some((m) => m.id === sent.body.message.id), false, 'gone for me');
+
+  const theirs = await other.api.call(`/api/chats/${chatId}/messages`, { token: other.token });
+  assert.equal(theirs.body.messages.some((m) => m.id === sent.body.message.id), true, 'still there for them');
+
+  const list = await me.api.call('/api/chats', { token: me.token });
+  const entry = list.body.chats.find((c) => c.id === chatId);
+  assert.equal(entry.lastMessage, null, 'a hidden message does not drive the preview');
+  assert.equal(entry.unread, 0, 'and it does not count as unread');
+});
+
+test('the media gallery lists images and files separately', async () => {
+  const me = await newUser('gallery_a');
+  const other = await newUser('gallery_b');
+  const chat = await me.api.call('/api/chats/direct', { method: 'POST', token: me.token, body: { userId: other.user.id } });
+  const chatId = chat.body.chat.id;
+
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  const imgForm = new FormData();
+  imgForm.append('file', new Blob([png], { type: 'image/png' }), 'pic.png');
+  const img = await me.api.call('/api/attachments', { method: 'POST', token: me.token, form: imgForm });
+  await me.api.call(`/api/chats/${chatId}/messages`, {
+    method: 'POST', token: me.token, body: { type: 'image', attachmentId: img.body.attachment.id },
+  });
+
+  const fileForm = new FormData();
+  fileForm.append('file', new Blob([Buffer.from('report body')], { type: 'text/plain' }), 'notes.txt');
+  const file = await me.api.call('/api/attachments', { method: 'POST', token: me.token, form: fileForm });
+  await me.api.call(`/api/chats/${chatId}/messages`, {
+    method: 'POST', token: me.token, body: { type: 'file', attachmentId: file.body.attachment.id },
+  });
+
+  const images = await me.api.call(`/api/chats/${chatId}/media?type=image`, { token: me.token });
+  assert.equal(images.status, 200);
+  assert.equal(images.body.items.length, 1);
+  assert.equal(images.body.items[0].attachment.mime, 'image/png');
+  assert.match(images.body.items[0].attachment.url, /^\/api\/attachments\//);
+
+  const files = await me.api.call(`/api/chats/${chatId}/media?type=file`, { token: me.token });
+  assert.equal(files.body.items.length, 1);
+  assert.equal(files.body.items[0].attachment.name, 'notes.txt');
+
+  const outsider = await newUser('gallery_c');
+  const denied = await outsider.api.call(`/api/chats/${chatId}/media?type=image`, { token: outsider.token });
+  assert.equal(denied.status, 403);
+});
+
+test('@mentions resolve to members and are flagged for the mentioned user', async () => {
+  const owner = await newUser('mentor_a');
+  const bob = await newUser('mentor_b');
+  const carol = await newUser('mentor_c');
+  const group = await owner.api.call('/api/chats/group', {
+    method: 'POST', token: owner.token, body: { title: 'Mentions', memberIds: [bob.user.id, carol.user.id] },
+  });
+  const chatId = group.body.chat.id;
+
+  const sent = await owner.api.call(`/api/chats/${chatId}/messages`, {
+    method: 'POST', token: owner.token, body: { type: 'text', body: 'hey @mentor_b can you check this?' },
+  });
+  assert.equal(sent.status, 201);
+  assert.deepEqual(sent.body.message.mentions, [bob.user.id]);
+  assert.equal(sent.body.message.mentionsMe, false, 'the author is not mentioned');
+
+  const bobsView = await bob.api.call(`/api/chats/${chatId}/messages`, { token: bob.token });
+  assert.equal(bobsView.body.messages.at(-1).mentionsMe, true);
+
+  // A name that is not a member is not a mention.
+  const outside = await owner.api.call(`/api/chats/${chatId}/messages`, {
+    method: 'POST', token: owner.token, body: { type: 'text', body: 'ping @someone_else' },
+  });
+  assert.deepEqual(outside.body.message.mentions, []);
+});
+
 test('security headers and rate limiting are wired up', async () => {
   const res = await fetch(`${baseUrl}/healthz`);
   assert.equal(res.status, 200);

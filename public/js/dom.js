@@ -69,6 +69,8 @@ const ICONS = {
   monitor: '<rect x="2.5" y="3.5" width="19" height="13" rx="2.2"/><path d="M8.5 21h7M12 16.5V21"/>',
   alert: '<path d="M12 3.2 2.8 19.4h18.4Z"/><path d="M12 9.6v4.6M12 17.4h.01"/>',
   copy: '<rect x="9" y="9" width="12" height="12" rx="2.4"/><path d="M6 15H4.8A1.8 1.8 0 0 1 3 13.2V4.8A1.8 1.8 0 0 1 4.8 3h8.4A1.8 1.8 0 0 1 15 4.8V6"/>',
+  clock: '<circle cx="12" cy="12" r="8.6"/><path d="M12 7.4V12l3.2 2"/>',
+  image: '<rect x="3" y="4.5" width="18" height="15" rx="2.4"/><circle cx="8.6" cy="10" r="1.6"/><path d="m4.2 17 4.6-4.2 3.4 3 3-2.6 4.6 4.2"/>',
 };
 
 export function icon(name, cls = '') {

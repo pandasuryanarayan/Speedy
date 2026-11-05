@@ -79,6 +79,33 @@ messagesRouter.delete(
 );
 
 messagesRouter.post(
+  '/messages/:id/hide',
+  requireAuth,
+  writeLimiter,
+  asyncHandler(async (req, res) => {
+    res.json({ data: await messages.hideMessage(req.user.id, req.params.id) });
+  }),
+);
+
+messagesRouter.get(
+  '/chats/:chatId/media',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const type = req.query.type === 'file' ? 'file' : 'image';
+    const limit = Math.min(Math.max(Number(req.query.limit) || 60, 1), 100);
+    res.json({
+      data: {
+        items: await messages.listMedia(req.user.id, req.params.chatId, {
+          type,
+          limit,
+          unlockToken: unlockOf(req),
+        }),
+      },
+    });
+  }),
+);
+
+messagesRouter.post(
   '/messages/:id/reactions',
   requireAuth,
   writeLimiter,
