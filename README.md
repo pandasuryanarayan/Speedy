@@ -11,16 +11,13 @@ modules. No build pipeline, no ORM, no framework churn.
 It is also **yours to host**: one command on a VPS, a Compose file with TLS, an env-driven auth
 policy, and no managed service in the dependency chain.
 
-![Speedy — conversation view](docs/screenshots/chat.png)
-
-| Sign in | Group conversation | Mobile |
-| --- | --- | --- |
-| ![Sign in](docs/screenshots/sign-in.png) | ![Group chat](docs/screenshots/group.png) | ![Mobile](docs/screenshots/mobile.png) |
+![Speedy — desktop conversation view](docs/screenshots/desktop-conversation.png)
 
 ---
 
 ## Contents
 
+- [Screenshots](#screenshots)
 - [Capabilities](#capabilities)
 - [Self-hosting](#self-hosting)
 - [Architecture](#architecture)
@@ -35,6 +32,24 @@ policy, and no managed service in the dependency chain.
 - [License](#license)
 
 ---
+
+## Screenshots
+
+### Desktop
+
+| Sign in | Chats |
+| --- | --- |
+| ![Sign in](docs/screenshots/desktop-sign-in.png) | ![Chat list](docs/screenshots/desktop-chats.png) |
+
+| Conversation | Group chat | Profile and security |
+| --- | --- | --- |
+| ![Conversation](docs/screenshots/desktop-conversation.png) | ![Group chat](docs/screenshots/desktop-group.png) | ![Profile](docs/screenshots/desktop-profile.png) |
+
+### Mobile
+
+| Chats | Conversation |
+| --- | --- |
+| ![Mobile chat list](docs/screenshots/mobile-chats.png) | ![Mobile conversation](docs/screenshots/mobile-conversation.png) |
 
 ## Capabilities
 
