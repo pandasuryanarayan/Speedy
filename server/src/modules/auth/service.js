@@ -17,14 +17,25 @@ function assertUsernameAllowed(username) {
   }
 }
 
-async function createSession(userId, { familyId = newId(), ip = null, userAgent = null } = {}) {
+async function createSession(userId, { familyId = newId(), familyStartedAt = Date.now(), ip = null, userAgent = null } = {}) {
   const sessionId = newId();
   const { token, hash } = createRefreshToken();
   const now = Date.now();
   await run(
-    `INSERT INTO sessions (id, user_id, family_id, token_hash, user_agent, ip, created_at, last_used_at, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [sessionId, userId, familyId, hash, (userAgent || '').slice(0, 255), ip, now, now, now + config.refreshTokenTtl * 1000],
+    `INSERT INTO sessions (id, user_id, family_id, token_hash, user_agent, ip, created_at, last_used_at, expires_at, family_started_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      sessionId,
+      userId,
+      familyId,
+      hash,
+      (userAgent || '').slice(0, 255),
+      ip,
+      now,
+      now,
+      now + config.refreshTokenTtl * 1000,
+      familyStartedAt,
+    ],
   );
   return { sessionId, refreshToken: token, familyId };
 }
@@ -116,15 +127,36 @@ export async function refresh(refreshToken, ctx = {}) {
     throw unauthorized('Session expired, sign in again');
   }
 
-  if (Number(row.expires_at) <= Date.now()) {
-    await run('UPDATE sessions SET revoked_at = ? WHERE id = ?', [Date.now(), row.id]);
+  const now = Date.now();
+
+  if (Number(row.expires_at) <= now) {
+    await run('UPDATE sessions SET revoked_at = ? WHERE id = ?', [now, row.id]);
+    throw unauthorized('Session expired, sign in again');
+  }
+
+  // Idle timeout: a session that has not been used recently is dead even if
+  // its refresh token is still within its expiry window.
+  if (now - Number(row.last_used_at ?? row.created_at) > config.sessionIdleMs) {
+    await run('UPDATE sessions SET revoked_at = ? WHERE id = ?', [now, row.id]);
+    await audit('auth.session_idle_timeout', { userId: row.user_id, req: ctx.req });
+    throw unauthorized('Session timed out, sign in again');
+  }
+
+  // Absolute lifetime: rotating refresh tokens forever does not extend this.
+  if (now - Number(row.family_started_at ?? row.created_at) > config.sessionAbsoluteMs) {
+    await run('UPDATE sessions SET revoked_at = ? WHERE family_id = ? AND revoked_at IS NULL', [now, row.family_id]);
+    await audit('auth.session_absolute_timeout', { userId: row.user_id, req: ctx.req });
     throw unauthorized('Session expired, sign in again');
   }
 
   const user = await get('SELECT * FROM users WHERE id = ?', [row.user_id]);
   if (!user || user.is_disabled) throw unauthorized('Session expired, sign in again');
 
-  const next = await createSession(user.id, { ...ctx, familyId: row.family_id });
+  const next = await createSession(user.id, {
+    ...ctx,
+    familyId: row.family_id,
+    familyStartedAt: Number(row.family_started_at ?? row.created_at),
+  });
   await run('UPDATE sessions SET revoked_at = ?, replaced_by = ?, last_used_at = ? WHERE id = ?', [
     Date.now(),
     next.sessionId,
@@ -147,7 +179,9 @@ export async function logoutAll(userId, ctx = {}) {
 
 export async function listSessions(userId, currentSessionId) {
   const rows = await all(
-    'SELECT id, user_agent, ip, created_at, last_used_at, expires_at FROM sessions WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY last_used_at DESC',
+    `SELECT id, user_agent, ip, created_at, last_used_at, expires_at, family_started_at
+     FROM sessions WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ?
+     ORDER BY last_used_at DESC`,
     [userId, Date.now()],
   );
   return rows.map((r) => ({
@@ -158,6 +192,7 @@ export async function listSessions(userId, currentSessionId) {
     createdAt: r.created_at,
     lastUsedAt: r.last_used_at,
     expiresAt: r.expires_at,
+    familyStartedAt: r.family_started_at,
   }));
 }
 

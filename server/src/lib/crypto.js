@@ -44,3 +44,30 @@ export function timingSafeEqualString(a, b) {
   if (bufA.length !== bufB.length) return false;
   return crypto.timingSafeEqual(bufA, bufB);
 }
+
+/**
+ * Binary variant for files: SPV1 | iv(12) | tag(16) | ciphertext.
+ * Same AES-256-GCM key as message bodies, so one secret covers the data at rest.
+ */
+const BLOB_MAGIC = Buffer.from('SPV1');
+
+export function encryptBuffer(buffer) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const body = Buffer.concat([cipher.update(buffer), cipher.final()]);
+  return Buffer.concat([BLOB_MAGIC, iv, cipher.getAuthTag(), body]);
+}
+
+export function decryptBuffer(payload) {
+  if (!Buffer.isBuffer(payload) || payload.length < 32 || !payload.subarray(0, 4).equals(BLOB_MAGIC)) {
+    throw new Error('Not an encrypted blob');
+  }
+  const iv = payload.subarray(4, 16);
+  const tag = payload.subarray(16, 32);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(payload.subarray(32)), decipher.final()]);
+}
+
+export const isEncryptedBlob = (payload) =>
+  Buffer.isBuffer(payload) && payload.length >= 32 && payload.subarray(0, 4).equals(BLOB_MAGIC);

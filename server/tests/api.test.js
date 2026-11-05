@@ -419,6 +419,154 @@ test('a locked chat needs the account password to open', async () => {
   assert.equal(afterRemoval.status, 200);
 });
 
+test('sessions die after idle time and after an absolute lifetime', async () => {
+  const { db } = await import('../src/db/index.js');
+  const me = await newUser('victor');
+
+  // Idle: pretend the session has not been used for two hours.
+  await db.execute({
+    sql: 'UPDATE sessions SET last_used_at = ? WHERE user_id = ?',
+    args: [Date.now() - 2 * 60 * 60 * 1000, me.user.id],
+  });
+  const idle = await me.api.call('/api/auth/me', { token: me.token });
+  assert.equal(idle.status, 401, 'idle session is rejected');
+  const revoked = await db.execute({ sql: 'SELECT revoked_at FROM sessions WHERE user_id = ?', args: [me.user.id] });
+  assert.ok(revoked.rows[0].revoked_at, 'idle session is revoked server-side');
+
+  // Absolute: a fresh session whose family started long ago cannot refresh.
+  const other = await newUser('wendy');
+  await db.execute({
+    sql: 'UPDATE sessions SET family_started_at = ? WHERE user_id = ?',
+    args: [Date.now() - 400 * 24 * 60 * 60 * 1000, other.user.id],
+  });
+  const refreshed = await other.api.call('/api/auth/refresh', { method: 'POST' });
+  assert.equal(refreshed.status, 401, 'absolute lifetime cannot be extended by refreshing');
+});
+
+test('attachments are re-encoded and encrypted on disk', async () => {
+  const fsMod = await import('node:fs/promises');
+  const pathMod = await import('node:path');
+  const zlib = await import('node:zlib');
+  const { db } = await import('../src/db/index.js');
+  const me = await newUser('xavier');
+
+  // A real PNG carrying a tEXt marker plus a PHP payload glued on the end.
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32 ? zlib.crc32(body) : 0);
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(1, 0);
+  ihdr.writeUInt32BE(1, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  const idat = zlib.deflateSync(Buffer.from([0, 91, 91, 214]));
+  const png = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('tEXt', Buffer.from('Comment\0speedy-secret-marker', 'latin1')),
+    chunk('IDAT', idat),
+    chunk('IEND', Buffer.alloc(0)),
+    Buffer.from('<?php system($_GET[0]); ?>', 'latin1'),
+  ]);
+
+  const form = new FormData();
+  form.append('file', new Blob([png], { type: 'image/png' }), 'payload.png');
+  const upload = await me.api.call('/api/attachments', { method: 'POST', token: me.token, form });
+  assert.equal(upload.status, 201);
+
+  const row = await db.execute({ sql: 'SELECT storage_key, encrypted FROM attachments WHERE id = ?', args: [upload.body.attachment.id] });
+  assert.equal(row.rows[0].encrypted, 1);
+  const onDisk = await fsMod.readFile(pathMod.join(tmpDir, 'uploads', row.rows[0].storage_key));
+  assert.equal(onDisk.subarray(0, 4).toString('latin1'), 'SPV1', 'stored bytes are ciphertext');
+  assert.ok(!onDisk.includes(Buffer.from('speedy-secret-marker')), 'metadata marker is gone');
+  assert.ok(!onDisk.includes(Buffer.from('<?php')), 'appended payload is gone');
+
+  const download = await fetch(`${baseUrl}${upload.body.attachment.url}`);
+  assert.equal(download.status, 200);
+  const bytes = Buffer.from(await download.arrayBuffer());
+  assert.equal(bytes.subarray(0, 4).toString('hex'), '89504e47', 'still a valid PNG after re-encoding');
+  assert.ok(!bytes.includes(Buffer.from('speedy-secret-marker')));
+  assert.ok(!bytes.includes(Buffer.from('<?php')));
+
+  // A file that claims to be an image but cannot be decoded is refused.
+  const fake = new FormData();
+  fake.append('file', new Blob([Buffer.concat([png.subarray(0, 8), Buffer.from('not really a png at all')])], { type: 'image/png' }), 'broken.png');
+  const rejected = await me.api.call('/api/attachments', { method: 'POST', token: me.token, form: fake });
+  assert.equal(rejected.status, 400);
+});
+
+test('a user can export their data and delete their account', async () => {
+  const me = await newUser('yara');
+  const friend = await newUser('zane');
+  const chat = await me.api.call('/api/chats/direct', { method: 'POST', token: me.token, body: { userId: friend.user.id } });
+  const chatId = chat.body.chat.id;
+  await me.api.call(`/api/chats/${chatId}/messages`, { method: 'POST', token: me.token, body: { type: 'text', body: 'exported message' } });
+
+  // The export is a download, not the usual { data } envelope.
+  const exported = await fetch(`${baseUrl}/api/users/me/export`, { headers: { Authorization: `Bearer ${me.token}` } });
+  assert.equal(exported.status, 200);
+  assert.match(exported.headers.get('content-disposition'), /attachment; filename="speedy-export-yara-/);
+  const exportedBody = await exported.json();
+  assert.equal(exportedBody.profile.username, 'yara');
+  assert.ok(exportedBody.chats.length >= 1);
+  const chatExport = exportedBody.chats.find((c) => c.id === chatId);
+  assert.equal(chatExport.messages.at(-1).body, 'exported message', 'export decrypts the bodies');
+
+  const wrong = await me.api.call('/api/users/me', { method: 'DELETE', token: me.token, body: { password: 'nope' } });
+  assert.equal(wrong.status, 401);
+
+  const deleted = await me.api.call('/api/users/me', { method: 'DELETE', token: me.token, body: { password: 'test-password-123' } });
+  assert.equal(deleted.status, 204);
+
+  const loginAgain = await client().call('/api/auth/login', { method: 'POST', body: { username: 'yara', password: 'test-password-123' } });
+  assert.equal(loginAgain.status, 401, 'the account is gone');
+
+  const stillThere = await me.api.call('/api/auth/me', { token: me.token });
+  assert.equal(stillThere.status, 401, 'sessions are revoked');
+
+  // The friend keeps the conversation; the message survives with no sender.
+  const friendView = await friend.api.call(`/api/chats/${chatId}/messages`, { token: friend.token });
+  assert.equal(friendView.status, 200);
+  assert.equal(friendView.body.messages.at(-1).body, 'exported message');
+  assert.equal(friendView.body.messages.at(-1).sender, null, 'sender is detached, not fabricated');
+});
+
+test('backups are written, verified and can be restored', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const fsMod = await import('node:fs/promises');
+  const pathMod = await import('node:path');
+
+  const outDir = pathMod.join(tmpDir, 'backups');
+  execFileSync(process.execPath, ['scripts/backup.js', '--out', outDir, '--keep', '3'], {
+    env: { ...process.env, DATA_DIR: tmpDir },
+    stdio: 'pipe',
+  });
+
+  const [stamp] = (await fsMod.readdir(outDir)).sort().reverse();
+  const manifest = JSON.parse(await fsMod.readFile(pathMod.join(outDir, stamp, 'manifest.json'), 'utf8'));
+  assert.ok(manifest.database.bytes > 0);
+  assert.match(manifest.database.sha256, /^[a-f0-9]{64}$/);
+  assert.ok(manifest.uploads.files >= 1, 'uploads are included');
+
+  const restoreDir = pathMod.join(tmpDir, 'restored');
+  await fsMod.mkdir(restoreDir, { recursive: true });
+  execFileSync(process.execPath, ['scripts/restore.js', '--from', pathMod.join(outDir, stamp)], {
+    env: { ...process.env, DATA_DIR: restoreDir },
+    stdio: 'pipe',
+  });
+
+  const { createClient } = await import('@libsql/client');
+  const restored = createClient({ url: `file:${pathMod.join(restoreDir, 'speedy.db')}`, intMode: 'number' });
+  const count = await restored.execute('SELECT COUNT(*) AS c FROM users');
+  assert.ok(Number(count.rows[0].c) > 0, 'restored database still has users');
+  restored.close();
+});
+
 test('security headers and rate limiting are wired up', async () => {
   const res = await fetch(`${baseUrl}/healthz`);
   assert.equal(res.status, 200);

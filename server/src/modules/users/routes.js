@@ -37,6 +37,29 @@ usersRouter.put(
 );
 
 usersRouter.get(
+  '/me/export',
+  asyncHandler(async (req, res) => {
+    const data = await users.exportUserData(req.user.id);
+    const stamp = new Date().toISOString().slice(0, 10);
+    res.set({
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Disposition': `attachment; filename="speedy-export-${req.user.username}-${stamp}.json"`,
+      'Cache-Control': 'no-store',
+    });
+    res.send(JSON.stringify(data, null, 2));
+  }),
+);
+
+usersRouter.delete(
+  '/me',
+  writeLimiter,
+  asyncHandler(async (req, res) => {
+    await users.deleteAccount(req.user.id, req.body?.password, req);
+    res.status(204).end();
+  }),
+);
+
+usersRouter.get(
   '/blocked',
   asyncHandler(async (req, res) => {
     res.json({ data: { users: await users.listBlocked(req.user.id) } });

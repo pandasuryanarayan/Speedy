@@ -1,202 +1,224 @@
-# Speedy — a production-ready chat app
+# Speedy
 
-A complete, self-hosted WhatsApp-style messenger: real-time 1:1 and group chat, media sharing,
-delivery/read receipts, typing indicators, presence, reactions, edits and deletes — built with a
-small, boring, well-understood stack and hardened with modern security defaults.
+**A self-hosted, real-time messaging platform with security controls documented to the level an
+engineering review would ask for.**
 
-![Speedy chat](docs/screenshots/chat.png)
+Speedy is a complete chat application — direct and group conversations, media and file sharing,
+delivery and read receipts, presence, pinning and password-locked conversations — built on a small,
+auditable stack: Node.js, Socket.IO, SQLite and vanilla ES modules. No build pipeline, no ORM, no
+framework churn.
 
-| Sign in | Group chat | Mobile |
+![Speedy — conversation view](docs/screenshots/chat.png)
+
+| Sign in | Group conversation | Mobile |
 | --- | --- | --- |
 | ![Sign in](docs/screenshots/sign-in.png) | ![Group chat](docs/screenshots/group.png) | ![Mobile](docs/screenshots/mobile.png) |
 
 ---
 
-## Features
+## Contents
+
+- [Capabilities](#capabilities)
+- [Architecture](#architecture)
+- [Security controls](#security-controls)
+- [Getting started](#getting-started)
+- [Configuration](#configuration)
+- [Operations](#operations)
+- [API](#api)
+- [Testing](#testing)
+- [Data protection and compliance](#data-protection-and-compliance)
+- [Limitations and roadmap](#limitations-and-roadmap)
+- [License](#license)
+
+---
+
+## Capabilities
 
 **Messaging**
-- Real-time 1:1 and group conversations over WebSockets (with automatic polling fallback)
-- Message history with cursor pagination ("Load earlier messages")
-- Delivery and read receipts (single tick, double tick, blue double tick)
-- Typing indicators and online / last-seen presence
-- Reply-to with quoted previews, emoji reactions, message editing, delete for everyone
-- Image and file attachments (10 MB default), inline image previews, lightbox
-- In-conversation message search
-- Unread badges, per-chat mute, chat filters (All / Unread / Groups)
-- Pin conversations to the top of the list
-- Lock a chat behind your account password — it asks again on every open
+Real-time 1:1 and group conversations over WebSockets with polling fallback · message history with
+cursor pagination · delivery and read receipts · typing indicators and presence · replies with
+quoted context · emoji reactions · edit and delete-for-everyone · image and file attachments with
+inline previews and a lightbox · in-conversation search · unread counts.
 
-**Accounts & groups**
-- Username + password accounts (no phone number, no email required)
-- Profile: display name, about text, avatar upload
-- Group chats with owner/admin/member roles, add/remove members, rename, leave
-- Block users; blocked contacts cannot message you
-- Session management UI: see every signed-in device and revoke any of them
+**Conversation management**
+Pin conversations to the top · lock a conversation behind the account password · mute · filters
+(All / Unread / Groups) · block contacts.
+
+**Accounts and groups**
+Username + password accounts · profile with display name, about and avatar · group roles
+(owner / admin / member) · add, remove and rename · leave with ownership transfer · session list
+with per-device revocation.
 
 **Product quality**
-- Responsive layout (desktop 3-pane, mobile full-screen with slide transitions)
-- One indigo brand theme applied across every screen, no theme switching to manage
-- Keyboard shortcuts (`Ctrl/⌘+K` search, `Ctrl/⌘+N` new chat, `Esc` closes panels)
-- Accessible markup: focus states, ARIA labels, reduced-motion support
-- Optimistic sending with retry, offline detection, graceful reconnection
+Responsive three-pane desktop layout and full-screen mobile layout · one consistent brand theme ·
+keyboard shortcuts · accessible markup with focus states and reduced-motion support · optimistic
+sending with offline detection and retry.
 
-## Tech stack
+## Architecture
 
-| Layer | Choice | Why |
-| --- | --- | --- |
-| Server | Node.js 20 + Express 4 | Ubiquitous, easy to audit, no build step |
-| Realtime | Socket.IO 4 | Rooms, acks, reconnection, polling fallback |
-| Database | SQLite via `@libsql/client` | Zero-ops, WAL mode, prepared statements, same API as Turso/libSQL if you outgrow a single node |
-| Frontend | Vanilla ES modules + custom CSS | No bundler, no framework churn, ~40 KB of app code, instant load |
-| Auth | JWT access tokens + rotating refresh cookies | Short-lived bearer tokens, revocable sessions |
-| Validation | Zod | One schema per endpoint, shared error shape |
-| Logging | Pino | Structured JSON, redacted secrets |
+```
+Browser (vanilla ES modules, no build step)
+  ├── api.js      fetch + bearer token + single-flight refresh + CSRF header
+  ├── socket.js   Socket.IO client, ack-promisified
+  ├── store.js    one observable state object
+  └── ui/*        sidebar, chat pane, info panel, modals — DOM built with h(), text nodes only
+        │
+        │  HTTPS /api   +   WSS /socket.io
+        ▼
+Express 4 ── requestId → helmet/CSP → pino → json/cookies → origin check → rate limits → route
+        │
+        ├── modules/<domain>/{routes,service}.js   validation → service → SQL
+        ├── realtime/io.js                         socket auth, rooms, presence, per-socket limits
+        ├── realtime/bus.js                        in-process domain events (transport agnostic)
+        └── db/                                    @libsql/client (SQLite, WAL) + migrations
+```
 
-No TypeScript, no ORM, no CSS framework, no build pipeline. You can read every line.
+Services never import Socket.IO: they publish domain events on an internal bus and the realtime layer
+fans them out. The same `messages.sendMessage()` therefore serves both `POST /api/chats/:id/messages`
+and the `message:send` socket event.
 
-## Quick start
+**Data model** — `users`, `sessions`, `chats`, `chat_members`, `messages`, `attachments`,
+`message_receipts`, `reactions`, `blocks`, `audit_log`. Each chat carries a monotonic `seq` counter
+incremented inside the same transaction as the insert, so pagination, read receipts and unread counts
+are immune to clock skew.
+
+## Security controls
+
+Status legend: **Implemented** — in the codebase and covered by tests. **Partial** — present with a
+stated gap. Everything in this table is enforced server-side; nothing relies on the UI hiding a
+button.
+
+### Authentication
+
+| Control | Implementation |
+| --- | --- |
+| Password storage | scrypt, N=32768 / r=8 / p=1, 64-byte output, 16-byte per-user salt; parameters embedded in the hash so they can be raised later |
+| Password comparison | `timingSafeEqual`; unknown usernames run a dummy derivation so response time does not reveal whether an account exists |
+| Account enumeration | Identical error text and status for unknown user and wrong password |
+| Brute force | Per-account lockout after 5 failures (15 min) plus per-IP rate limits on `/auth/login` and `/auth/register` (20 / 15 min, successful attempts not counted) |
+| Username policy | Lower-cased, length and character limits, reserved names refused (`admin`, `root`, `support`, …) |
+| Password policy | Minimum 10 characters, maximum 128, no silent truncation |
+
+### Sessions and tokens
+
+| Control | Implementation |
+| --- | --- |
+| Access token | HS256 JWT, 15-minute lifetime, claims `sub` / `sid` / `role`, held in a JavaScript variable only — never `localStorage`, never a cookie |
+| Refresh token | 384-bit opaque random value, stored **hashed** (SHA-256), sent in an `httpOnly`, `SameSite=Strict`, `Secure`, path-scoped cookie |
+| Rotation | A new session row on every refresh, linked by `replaced_by` |
+| Reuse detection | Presenting an already-rotated token revokes the entire token family and writes an audit event |
+| Idle timeout | A session with no activity for 30 minutes is revoked on the next request (`SESSION_IDLE_MINUTES`) |
+| Absolute lifetime | 30 days from the first login of a family, unaffected by refreshing (`SESSION_ABSOLUTE_DAYS`) |
+| Immediate revocation | Every authenticated request re-checks the session row (30 s cache), so logout, "sign out everywhere", idle expiry and reuse detection take effect at once — including for live sockets |
+| Device management | Users can list and revoke individual sessions; the current one is marked |
+| CSRF | `SameSite=Strict` cookie + `Origin` / `Sec-Fetch-Site` checks on writes + double-submit token on `/auth/refresh` |
+
+### Authorization
+
+| Control | Implementation |
+| --- | --- |
+| Conversation access | Every read, write, search and attachment request checks `chat_members` |
+| Message mutation | Edit and delete are author-only |
+| Group administration | Rename, add and remove require `owner`/`admin`; role changes are `owner`-only; the owner cannot be demoted or removed |
+| Attachment access | Owner, a member of a conversation where the file is used, or an avatar — never "any authenticated user" |
+| Locked conversations | `423` until a password-derived, 30-minute token bound to user + chat is presented |
+| Blocking | A blocked contact cannot open a direct conversation with you |
+
+### Transport
+
+| Control | Implementation |
+| --- | --- |
+| TLS | Terminated at the reverse proxy; `Secure` cookies and `upgrade-insecure-requests` in production |
+| HSTS | One year, `includeSubDomains`, `preload` (production only) |
+| Security headers | CSP (`default-src 'self'`, no `unsafe-inline`, no `unsafe-eval`), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: no-referrer`, COOP/CORP `same-origin`, `Permissions-Policy` |
+| API caching | `Cache-Control: no-store` on every API response |
+
+### Data at rest
+
+| Control | Implementation |
+| --- | --- |
+| Message bodies | AES-256-GCM, key from `MESSAGE_KEY` outside the database, authenticated (tampering fails the tag rather than returning garbage) |
+| Attachments | Encrypted on disk with the same AES-256-GCM key (`SPV1` container), `0600`, random names, outside the static root |
+| Refresh tokens | SHA-256 hashes only |
+| Backups | Encrypted payloads by construction — a stolen backup does not expose message content or files without the key |
+
+### Input and output handling
+
+| Control | Implementation |
+| --- | --- |
+| SQL injection | 100% parameterised statements; no string interpolation of user input anywhere |
+| Request validation | Zod schema on every body, query string and socket payload; `422` with per-field messages |
+| Size limits | 128 KB JSON, 10 MB uploads, 256 KB socket payloads, 4 000-character messages |
+| XSS | User content is only ever written as text nodes; `innerHTML` is reserved for hard-coded icon constants |
+| CSP | Strict policy with no `unsafe-inline`; inline styles are avoided so it can stay strict |
+| Upload validation | MIME derived from magic bytes, never from the client header |
+| Image handling | Every image is decoded and **re-encoded** — this strips EXIF/GPS and destroys polyglot payloads (a valid PNG with appended PHP code does not survive) |
+| Filenames | Path components, control characters and reserved characters stripped; 120-character cap; stored under a random UUID |
+| File serving | `Content-Type` from the sniffed type, `nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, `Content-Disposition` inline only for JPEG/PNG/GIF/WebP |
+| SSRF | `lib/safe-fetch.js` is the only sanctioned outbound HTTP path: http/https only, no credentials in the URL, private/loopback/link-local/metadata addresses refused, DNS results re-checked (rebinding), redirects re-validated, time and size caps |
+
+### Realtime
+
+| Control | Implementation |
+| --- | --- |
+| Socket authentication | Access token required at handshake **and** the session row re-checked, so revoked sessions cannot hold a connection |
+| Room authorization | Sockets join only conversations the user belongs to; joining is re-verified |
+| Flood control | Per-socket token bucket (30 events / 10 s) plus per-IP HTTP limits |
+| Payload validation | Same schemas as the REST path, size capped |
+| Origin | WebSocket CORS pinned to `PUBLIC_ORIGIN` |
+
+### Operations and accountability
+
+| Control | Implementation |
+| --- | --- |
+| Audit log | Registration, login success/failure/lockout, refresh reuse, idle and absolute expiry, logout, session revocation, blocking, group membership changes, chat lock/unlock, account deletion — with user id, IP, user agent and timestamp |
+| Logging | Structured Pino with redaction of `authorization`, `cookie`, `token`, `password`; request id echoed as `X-Request-Id` |
+| Health | `GET /healthz` reports status, version, uptime and environment; `503` when the database is unreachable |
+| Backups | `npm run backup` — `VACUUM INTO` snapshot + encrypted uploads + manifest with SHA-256, retention pruning, safe while the server runs |
+| Restore | `npm run restore -- --from <dir>` verifies the manifest before overwriting, and refuses to clobber a live database without `--force` |
+| Secrets | Required in production (the server refuses to boot without `JWT_SECRET` and `MESSAGE_KEY`); generated once with `0600` in development |
+| Container | Non-root user, all capabilities dropped, `no-new-privileges`, read-only root filesystem with a writable data volume |
+| Shutdown | Graceful on `SIGTERM`/`SIGINT`; uncaught exceptions are logged then exit non-zero so the supervisor restarts cleanly |
+| Rate limits | 300 req/min per IP globally, 20 auth attempts / 15 min, 90 writes/min, 60 uploads/hour, 30 socket events / 10 s |
+
+## Getting started
 
 ```bash
 git clone <your-fork-url> speedy && cd speedy
 npm install
-cp .env.example .env          # optional in development; secrets are generated for you
-npm run seed                  # demo users + conversations (safe to skip)
-npm start
+cp .env.example .env       # optional in development — secrets are generated for you
+npm run seed               # optional demo data
+npm start                  # http://localhost:3000
 ```
 
-Open <http://localhost:3000>.
+Demo accounts created by `npm run seed` (password `speedy-demo-123`): `alice`, `bob`, `carol`,
+`dev`, `surya`.
 
-Demo accounts created by `npm run seed` (password `speedy-demo-123`):
-`alice`, `bob`, `carol`, `dev`, `surya`.
-
-> Development mode writes generated secrets to `data/.dev-secrets.json` (mode 0600).
-> In production the server refuses to boot unless `JWT_SECRET` and `MESSAGE_KEY` are set.
+> Development writes generated secrets to `data/.dev-secrets.json` (mode `0600`). In production the
+> server refuses to start unless `JWT_SECRET` and `MESSAGE_KEY` are set.
 
 ## Configuration
 
-All configuration is environment variables (see `.env.example`).
-
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `NODE_ENV` | `development` | `production` enables HSTS, secure cookies, required secrets |
+| `NODE_ENV` | `development` | `production` enables HSTS, secure cookies and required secrets |
 | `PORT` | `3000` | |
-| `PUBLIC_ORIGIN` | `http://localhost:$PORT` | Used for CORS + CSRF origin checks and WebSocket CORS |
-| `DATA_DIR` | `./data` | SQLite file, uploads, dev secrets |
-| `UPLOAD_DIR` | `$DATA_DIR/uploads` | Attachments (outside the static root, served through an authorized route) |
-| `JWT_SECRET` | generated in dev | **Required in production**, ≥ 32 chars |
+| `PUBLIC_ORIGIN` | `http://localhost:$PORT` | Origin used for CORS and CSRF checks |
+| `DATA_DIR` | `./data` | Database, uploads, development secrets, backups |
+| `UPLOAD_DIR` | `$DATA_DIR/uploads` | Encrypted attachments |
+| `JWT_SECRET` | generated in dev | **Required in production**, ≥ 32 characters |
 | `MESSAGE_KEY` | generated in dev | **Required in production**, base64 of exactly 32 bytes |
-| `ACCESS_TOKEN_TTL` | `900` | Access token lifetime in seconds |
-| `REFRESH_TOKEN_TTL` | `2592000` | Refresh token lifetime in seconds (30 days) |
-| `TRUST_PROXY` | `0` | Set to `1` behind nginx/Caddy/Cloudflare so `req.ip` and `secure` cookies work |
+| `ACCESS_TOKEN_TTL` | `900` | Access token lifetime (seconds) |
+| `REFRESH_TOKEN_TTL` | `2592000` | Refresh token lifetime (seconds) |
+| `SESSION_IDLE_MINUTES` | `30` | Revoke a session after this much inactivity |
+| `SESSION_ABSOLUTE_DAYS` | `30` | Hard limit on a session family, refresh or not |
+| `TRUST_PROXY` | `0` | Set to `1` behind nginx/Caddy/Cloudflare |
 | `MAX_UPLOAD_BYTES` | `10485760` | Per-file upload limit |
-| `LOG_LEVEL` | `info` (`debug` in dev) | Pino level |
+| `LOG_LEVEL` | `info` | Pino level |
 
-## Security
+## Operations
 
-The defaults are the safe ones, and every control here is deliberate:
-
-- **Passwords**: scrypt (N=32768, r=8, p=1) with per-user salt, parameters embedded in the hash so
-  they can be upgraded. Constant-time comparison. Dummy hashing on unknown users to defeat timing
-  based account enumeration.
-- **Sessions**: 15-minute JWT access tokens held in memory (never `localStorage`), plus opaque
-  refresh tokens in `httpOnly`, `SameSite=Strict`, path-scoped cookies. Refresh tokens are stored
-  only as SHA-256 hashes and **rotate on every use**; replaying a used token revokes the whole token
-  family. Logout revokes server-side immediately.
-- **Brute force**: per-IP rate limits on all auth endpoints, plus per-account lockout after 5 failed
-  passwords. Every login, failure, lockout, token reuse and group-admin change goes to an audit log.
-- **SQL injection**: 100% parameterized statements; no string concatenation of user input, no ORM
-  escape hatches.
-- **XSS**: no `innerHTML` for user content anywhere (text nodes only), strict CSP
-  (`default-src 'self'`, no `unsafe-inline`, no `unsafe-eval`), `nosniff`, `X-Frame-Options: DENY`.
-- **CSRF**: `SameSite=Strict` cookies, an `Origin`/`Sec-Fetch-Site` check on every write, and a
-  double-submit token on the refresh endpoint.
-- **Uploads**: never trust the client's `Content-Type` or filename — MIME is derived from magic
-  bytes, names are stripped of path components and control characters, files get random names and
-  are stored outside the web root, served only to chat members with
-  `Content-Security-Policy: sandbox` and `Content-Disposition` set. Browser-facing
-  URLs carry a short-lived HMAC signature bound to the viewer, so `<img>` and
-  download links work without weakening the authorization check.
-- **Authorization**: every chat read/write checks membership; every message mutation checks
-  authorship; every group action checks role. Covered by tests.
-- **Data at rest**: message bodies and edits are AES-256-GCM encrypted in SQLite with a key from the
-  environment, so a stolen database file does not leak conversations.
-- **Realtime abuse**: per-socket token bucket (30 events / 10 s), payload size caps, socket auth
-  re-validates the session on connect.
-- **Operational**: request IDs on every response, structured redacted logs, graceful shutdown,
-  health endpoint, non-root container, read-only root filesystem in the compose file.
-
-Full threat model, control-by-control mapping and known limitations: **[docs/SECURITY.md](docs/SECURITY.md)**.
-
-> **Honest note on encryption:** messages are encrypted **at rest and in transit**, but this is not
-> end-to-end encryption — the server holds the key and can read message bodies. Real E2EE (Signal
-> protocol, per-device keys, safety numbers) is a separate, much larger project; the UI copy and this
-> README deliberately do not claim it.
-
-## Project structure
-
-```
-.
-├── server/
-│   ├── src/
-│   │   ├── index.js            # bootstrap: migrate, HTTP + Socket.IO, graceful shutdown
-│   │   ├── app.js              # express wiring, static SPA, error handling
-│   │   ├── config.js           # env parsing, secret management, limits
-│   │   ├── db/                 # client, versioned schema, migrations, seed
-│   │   ├── lib/                # crypto, password, tokens, dto, errors, files, audit, presence
-│   │   ├── middleware/         # auth, security (helmet/CORS/CSRF/limits), errors, request id
-│   │   ├── modules/            # auth, users, chats, messages, attachments (service + routes)
-│   │   └── realtime/           # socket.io server + internal event bus
-│   └── tests/api.test.js       # 14 API tests: auth, authz, receipts, uploads, CSRF, ...
-├── public/
-│   ├── index.html              # single page shell
-│   ├── css/app.css             # design tokens, brand theme, responsive layout
-│   └── js/                     # api, socket, store, dom helpers, ui/{auth,sidebar,chat,info,modals}
-├── docs/                       # SECURITY.md, API.md, ARCHITECTURE.md, screenshots
-├── Dockerfile / docker-compose.yml
-└── .env.example
-```
-
-## API
-
-REST for everything durable, WebSocket for everything live. Full reference: **[docs/API.md](docs/API.md)**.
-
-```
-POST   /api/auth/register            POST   /api/chats
-POST   /api/auth/login               GET    /api/chats
-POST   /api/auth/refresh             GET    /api/chats/:id
-POST   /api/auth/logout              PATCH  /api/chats/:id
-GET    /api/auth/me                  POST   /api/chats/:id/members
-GET    /api/auth/sessions            DELETE /api/chats/:id/members/:userId
-GET    /api/users/search             POST   /api/chats/:id/leave
-PATCH  /api/users/me                 GET    /api/chats/:id/messages
-POST   /api/users/:id/block          POST   /api/chats/:id/messages
-POST   /api/attachments              GET    /api/chats/:id/search
-GET    /api/attachments/:id          POST   /api/chats/:id/read
-                                     PATCH  /api/messages/:id
-                                     DELETE /api/messages/:id
-                                     POST   /api/messages/:id/reactions
-```
-
-Socket events: `message:send`, `message:read`, `typing`, `chat:join` (client → server);
-`message:new`, `message:updated`, `message:deleted`, `receipt:update`, `typing`, `presence`,
-`chat:new`, `chat:updated` (server → client). Every client → server message is ack'd.
-
-## Testing
-
-```bash
-npm test
-```
-
-14 end-to-end API tests run against a throwaway SQLite database in a temp directory — no mocks, no
-external services. They cover registration and validation, duplicate usernames, generic login
-failures, chat creation, encryption at rest, authorization on reads and writes, edit/delete
-ownership, reactions, group roles, refresh-token rotation with reuse detection, CSRF enforcement,
-logout revocation, upload sniffing and access control, read receipts, security headers, and the
-404/SPA-fallback split.
-
-## Deployment
-
-### Docker
+**Deploy with Docker**
 
 ```bash
 export JWT_SECRET=$(openssl rand -base64 48)
@@ -204,72 +226,98 @@ export MESSAGE_KEY=$(openssl rand -base64 32)
 docker compose up -d --build
 ```
 
-The container runs as a non-root user, drops all capabilities, has a read-only root filesystem with
-a writable data volume, and ships a health check.
-
-### Behind a reverse proxy
-
-Terminate TLS at nginx/Caddy and set `TRUST_PROXY=1` and `PUBLIC_ORIGIN=https://chat.example.com`.
-The app sets HSTS, secure cookies and `upgrade-insecure-requests` automatically in production.
-
-```nginx
-server {
-  listen 443 ssl http2;
-  server_name chat.example.com;
-
-  client_max_body_size 12m;
-
-  location / {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-  }
-
-  location /socket.io/ {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_set_header Host $host;
-    proxy_read_timeout 600s;
-  }
-}
-```
-
-### Checking what is deployed
-
-`GET /healthz` returns `{ status, version, uptime, env }`. The version comes from
-`package.json`, so it is the quickest way to confirm which build is actually
-running:
+**Check what is running**
 
 ```bash
 curl -s localhost:3000/healthz
-# {"status":"ok","version":"1.0.1","uptime":42,"env":"production"}
+# {"status":"ok","version":"1.2.0","uptime":42,"env":"production"}
 ```
 
-### Backups
+**Back up and restore**
 
-Everything lives in `DATA_DIR`: `speedy.db` (+ `-wal`/`-shm`) and `uploads/`. Use
-`sqlite3 data/speedy.db ".backup backup.db"` for a consistent online snapshot, and copy `uploads/`
-alongside it. Backups are still encrypted for message bodies, but treat them as sensitive — the
-keys are in your environment.
+```bash
+npm run backup -- --out /var/backups/speedy --keep 14
+npm run restore -- --from /var/backups/speedy/2026-11-05T12-00-00-000Z
+```
 
-## Known limitations
+Schedule the backup nightly (cron or a systemd timer) and restore one into a scratch directory once a
+quarter — an untested backup is a guess, not a backup.
 
-- **No end-to-end encryption** (see above). Server-side AES-256-GCM at rest + TLS in transit.
-- **Single instance**: presence and socket rooms are in-process. Running more than one node needs a
-  Redis adapter for Socket.IO and a shared presence store; the interfaces are isolated in
-  `realtime/` and `lib/presence.js` to make that swap small. libSQL also lets you point `db` at a
-  remote Turso database if you outgrow local SQLite.
-- **Search** decrypts a bounded window of recent messages per chat (400) instead of using SQL `LIKE`,
-  because bodies are encrypted. Fine for chat-sized histories; use a dedicated index if you need to
-  search years of messages.
-- **No push notifications**: the app is browser-first; background delivery needs a service worker and
-  a push service (VAPID), which is deliberately out of scope.
-- **No email/phone verification or password reset**: accounts are username + password only. Add an
-  email provider and a signed reset-token table if you need them.
+**Behind a reverse proxy** — terminate TLS at nginx or Caddy, set `TRUST_PROXY=1` and
+`PUBLIC_ORIGIN=https://chat.example.com`. Proxy `/socket.io/` with `Upgrade`/`Connection` headers and
+a long read timeout.
+
+## API
+
+REST for durable operations, WebSocket for live ones. Full reference: **[docs/API.md](docs/API.md)**.
+
+```
+POST   /api/auth/register            GET    /api/chats
+POST   /api/auth/login               POST   /api/chats/direct | /group
+POST   /api/auth/refresh             GET    /api/chats/:id
+POST   /api/auth/logout              PATCH  /api/chats/:id
+GET    /api/auth/me                  POST   /api/chats/:id/members
+GET    /api/auth/sessions            POST   /api/chats/:id/leave
+GET    /api/users/search             PATCH  /api/chats/:id/pin | /mute
+GET    /api/users/me/export          POST   /api/chats/:id/lock | /unlock
+DELETE /api/users/me                 GET    /api/chats/:id/messages
+POST   /api/attachments              POST   /api/chats/:id/messages
+GET    /api/attachments/:id          POST   /api/chats/:id/read
+                                     PATCH  /api/messages/:id
+                                     DELETE /api/messages/:id
+                                     POST   /api/messages/:id/reactions
+```
+
+## Testing
+
+```bash
+npm test
+```
+
+24 tests run against a throwaway SQLite database — no mocks, no external services. They cover
+registration and validation, duplicate usernames, generic login failures, chat creation, encryption at
+rest, authorization on reads and writes, edit/delete ownership, reactions, group roles, refresh
+rotation with reuse detection, CSRF enforcement, idle and absolute session expiry, logout revocation,
+upload sniffing, image re-encoding and encryption, signed attachment links, read receipts, pinning,
+locked chats, data export, account deletion, backup and restore, SSRF guards, security headers and the
+404/SPA split.
+
+## Data protection and compliance
+
+- **Access** — users can export everything held about them (`GET /api/users/me/export`, a JSON
+  download containing profile, conversations, messages and attachment metadata).
+- **Erasure** — `DELETE /api/users/me` (password-confirmed) removes the profile, sessions,
+  memberships, reactions, receipts and uploaded files. Messages the user sent remain in other
+  people's conversations with the sender detached, so a conversation is not silently rewritten for
+  everyone else.
+- **Minimisation** — no email or phone number is collected; no third-party analytics, no trackers, no
+  external fonts or CDNs.
+- **Log hygiene** — message content never reaches the logs; secrets are redacted by the logger.
+- **Portability** — the entire datastore is one SQLite file plus an encrypted uploads directory,
+  which makes backup, migration and deletion auditable.
+
+## Limitations and roadmap
+
+Stated plainly, because a security document that only lists strengths is not one:
+
+| Area | Status | Note |
+| --- | --- | --- |
+| End-to-end encryption | **Not implemented** | Messages are encrypted in transit and at rest, but the server holds the key and can read them. Real E2EE (Signal protocol, per-device keys, safety numbers) is a separate project — see below |
+| Multi-factor authentication | Not implemented | TOTP or WebAuthn/passkeys would be the next authentication step |
+| Email/phone verification, password reset | Not implemented | Accounts are username + password; add a provider and a signed reset-token table |
+| Breached-password screening | Not implemented | HIBP k-anonymity check at registration |
+| Malware scanning | Not implemented | Add ClamAV or a cloud scanner in the upload pipeline |
+| Moderation tooling | Partial | Users can block; there is no report queue or admin console |
+| Push notifications | Not implemented | Browser-first; needs a service worker and VAPID |
+| Horizontal scaling | Single instance | Presence and socket rooms are in-process; a Redis adapter plus a shared limiter is the upgrade path |
+| Alerting | Not implemented | The audit log exists but is not shipped to a SIEM or alerting system |
+| CI security scanning | Not implemented | Add `npm audit`, Dependabot and a SAST pass to the pipeline |
+
+**On end-to-end encryption.** It is not a switch. Doing it honestly means per-device keypairs,
+a key directory with verification, group key distribution, recovery for a lost device, and accepting
+that server-side search, previews and moderation stop working. Shipping a half-version that silently
+falls back to server-readable messages would be worse than shipping none, so it is scoped as its own
+piece of work rather than claimed here.
 
 ## License
 

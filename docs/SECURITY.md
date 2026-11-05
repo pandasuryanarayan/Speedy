@@ -48,6 +48,10 @@ layer (put a CDN/WAF in front).
   `auth.refresh_reuse` audit event is written.
 - Every authenticated request re-checks that the session is not revoked (30-second in-process cache),
   so logout, "sign out everywhere" and reuse detection take effect immediately.
+- **Idle timeout**: a session unused for `SESSION_IDLE_MINUTES` (30 by default) is revoked on the
+  next request and cannot be refreshed.
+- **Absolute lifetime**: a session family dies `SESSION_ABSOLUTE_DAYS` (30 by default) after its
+  first login, no matter how often it is refreshed.
 - Users can list and revoke individual sessions from the profile dialog.
 
 ### Authorization
@@ -84,6 +88,14 @@ All of these are exercised by `server/tests/api.test.js`.
 - Uploaded filenames are stripped of directory components, control characters and Windows-reserved
   characters, truncated to 120 characters, and never used as the on-disk name.
 
+### Outbound requests (SSRF)
+
+Nothing in Speedy fetches user-supplied URLs today — there are no link previews. `lib/safe-fetch.js`
+exists so that the first person to add one cannot do it unsafely: http/https only, credentials in the
+URL refused, private/loopback/link-local/CGNAT/multicast and cloud-metadata addresses (IPv4 and IPv6)
+refused, every DNS answer re-checked so a name resolving to `10.x` is rejected, redirects re-validated
+hop by hop, and hard caps on time and response size. Covered by tests including a DNS-rebinding case.
+
 ### Output handling
 
 - The frontend never assigns user content to `innerHTML`. `dom.js` `h()` sets `textContent`; only
@@ -113,7 +125,13 @@ All of these are exercised by `server/tests/api.test.js`.
   ciphertext fails the authentication tag instead of returning garbage.
 - Refresh tokens are hashed. Password hashes are salted. Audit entries never contain message bodies
   or secrets.
-- Uploaded files are written with mode `0600` and random names outside the static root.
+- **Attachments are encrypted at rest** with the same AES-256-GCM key, in an `SPV1` container
+  (`magic | iv | tag | ciphertext`). Only ciphertext reaches the disk, with mode `0600`, under a
+  random UUID name outside the static root. A stolen disk or backup yields no readable files.
+- Every uploaded image is **decoded and re-encoded** before storage. That removes EXIF (GPS, device
+  serial, timestamps), normalises orientation, caps dimensions at 2560 px and destroys polyglot
+  payloads — a valid PNG with appended PHP code does not survive the round trip. Files that claim to
+  be images but cannot be decoded are rejected with `400`.
 
 ### Realtime
 
@@ -153,9 +171,30 @@ global.
 
 `audit_log` records: `auth.register`, `auth.login`, `auth.login_failed`, `auth.login_blocked`,
 `auth.login_disabled`, `auth.refresh_reuse`, `auth.logout`, `auth.logout_all`,
-`auth.session_revoked`, `user.blocked`, `chat.group_created`, `chat.members_added`,
-`chat.member_removed` — with user id, IP, user agent, timestamp and small JSON metadata. Ship it to
+`auth.session_revoked`, `auth.session_idle_timeout`, `auth.session_absolute_timeout`,
+`user.blocked`, `chat.group_created`, `chat.members_added`, `chat.member_removed`, `chat.locked`,
+`chat.unlocked`, `chat.unlocked_permanently`, `account.deleted` — with user id, IP, user agent,
+timestamp and small JSON metadata. Ship it to
 your SIEM with `SELECT * FROM audit_log WHERE created_at > ?`.
+
+## Backups and restore
+
+`npm run backup` takes a `VACUUM INTO` snapshot (consistent, non-blocking), copies the encrypted
+uploads directory, and writes a manifest containing the database SHA-256 and byte size. Retention
+prunes to the newest `--keep` copies. `npm run restore -- --from <dir>` verifies the manifest against
+the file before copying, clears stale `-wal`/`-shm` sidecars, and refuses to overwrite a live database
+without `--force`.
+
+Backups are only as good as their restore. Restore one into a scratch directory on a schedule.
+
+## Data export and erasure
+
+- `GET /api/users/me/export` returns a JSON download with the profile, every conversation the user can
+  see, the decrypted message bodies and attachment metadata.
+- `DELETE /api/users/me` (password-confirmed) removes the profile, sessions, memberships, reactions,
+  receipts and uploaded files, then deletes any conversation left with no members. Messages already
+  delivered stay in other people's conversations with `sender_id` detached, so their history is not
+  silently rewritten.
 
 ## Responsible disclosure
 

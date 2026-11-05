@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import { Router } from 'express';
 import multer from 'multer';
 import config from '../../config.js';
@@ -43,7 +42,7 @@ attachmentsRouter.post(
 // so this route also accepts the short-lived signature that DTOs embed.
 attachmentsRouter.get(
   '/:id',
-  asyncHandler(async (req, res, next) => {
+  asyncHandler(async (req, res) => {
     let userId = null;
     const session = await authenticateRequest(req);
     if (session) {
@@ -61,21 +60,20 @@ attachmentsRouter.get(
       userId = verified.userId;
     }
 
-    const { row, filePath } = await attachments.getAttachmentForUser(req.params.id, userId);
+    const { row } = await attachments.getAttachmentForUser(req.params.id, userId);
+    const bytes = await attachments.readAttachmentBytes(row);
     const inline = INLINE_SAFE.has(row.mime);
 
     res.set({
       'Content-Type': row.mime,
-      'Content-Length': String(row.size),
+      'Content-Length': String(bytes.length),
       'Content-Disposition': contentDisposition(row.original_name, inline),
       'X-Content-Type-Options': 'nosniff',
       'Content-Security-Policy': "default-src 'none'; sandbox",
       'Cache-Control': 'private, max-age=86400',
     });
 
-    const stream = fs.createReadStream(filePath);
-    stream.on('error', next);
-    stream.pipe(res);
+    res.end(bytes);
   }),
 );
 

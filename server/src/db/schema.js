@@ -129,4 +129,10 @@ export const MIGRATIONS = [
   ALTER TABLE chat_members ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE chat_members ADD COLUMN locked INTEGER NOT NULL DEFAULT 0;
   `,
+  // 3 - session idle/absolute lifetime, encrypted attachments
+  `
+  ALTER TABLE sessions ADD COLUMN family_started_at INTEGER;
+  UPDATE sessions SET family_started_at = created_at WHERE family_started_at IS NULL;
+  ALTER TABLE attachments ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0;
+  `,
 ];

@@ -1,4 +1,5 @@
-import { get } from '../db/index.js';
+import config from '../config.js';
+import { get, run } from '../db/index.js';
 import { forbidden, unauthorized } from '../lib/errors.js';
 import { verifyAccessToken } from '../lib/tokens.js';
 import { toUserDTO } from '../lib/dto.js';
@@ -16,12 +17,25 @@ async function loadSession(sessionId) {
   const now = Date.now();
   if (cached && cached.checkedAt + SESSION_CACHE_TTL > now) return cached;
 
-  const row = await get('SELECT id, user_id, revoked_at, expires_at FROM sessions WHERE id = ?', [sessionId]);
-  const entry = {
-    active: Boolean(row) && !row.revoked_at && Number(row.expires_at) > now,
-    userId: row?.user_id ?? null,
-    checkedAt: now,
-  };
+  const row = await get(
+    'SELECT id, user_id, revoked_at, expires_at, last_used_at, family_started_at FROM sessions WHERE id = ?',
+    [sessionId],
+  );
+
+  const idleExpired = Boolean(row) && now - Number(row.last_used_at ?? now) > config.sessionIdleMs;
+  const absoluteExpired = Boolean(row) && now - Number(row.family_started_at ?? row.created_at ?? now) > config.sessionAbsoluteMs;
+
+  if (row && !row.revoked_at && (idleExpired || absoluteExpired)) {
+    // Revoke on the spot so the dead session cannot be refreshed later.
+    await run('UPDATE sessions SET revoked_at = ? WHERE id = ?', [now, sessionId]).catch(() => {});
+  }
+
+  const active = Boolean(row) && !row.revoked_at && Number(row.expires_at) > now && !idleExpired && !absoluteExpired;
+  if (active) {
+    await run('UPDATE sessions SET last_used_at = ? WHERE id = ?', [now, sessionId]).catch(() => {});
+  }
+
+  const entry = { active, userId: row?.user_id ?? null, checkedAt: now };
   cache.set(sessionId, entry);
   return entry;
 }

@@ -1,5 +1,5 @@
 import { h, avatarEl, icon, debounce } from '../dom.js';
-import { api } from '../api.js';
+import { api, exportMyData } from '../api.js';
 import { toast, toastError } from './toast.js';
 
 let openCount = 0;
@@ -210,7 +210,7 @@ export function peoplePicker({ title, confirmText = 'Start chat', excludeIds = [
  * password keeps the dialog open with an inline error instead of closing it.
  * Resolves true when onSubmit succeeds, false when cancelled.
  */
-export function unlockModal({ title, message, onSubmit }) {
+export function unlockModal({ heading = 'Locked chat', title, message, onSubmit, confirmText = 'Unlock' }) {
   return new Promise((resolve) => {
     let done = false;
     let busy = false;
@@ -221,7 +221,7 @@ export function unlockModal({ title, message, onSubmit }) {
       autocomplete: 'current-password',
     });
     const error = h('span', { class: 'field-error' });
-    const submitBtn = h('button', { class: 'btn btn-primary', text: 'Unlock' });
+    const submitBtn = h('button', { class: 'btn btn-primary', text: confirmText });
 
     const finish = (value) => {
       if (done) return;
@@ -250,7 +250,7 @@ export function unlockModal({ title, message, onSubmit }) {
       } finally {
         busy = false;
         submitBtn.disabled = false;
-        submitBtn.textContent = 'Unlock';
+        submitBtn.textContent = confirmText;
       }
     };
 
@@ -260,7 +260,7 @@ export function unlockModal({ title, message, onSubmit }) {
     });
 
     const ref = openModal({
-      title: 'Locked chat',
+      title: heading,
       body: [
         h('p', { class: 'modal-lead muted', text: message || `“${title}” is locked. Enter your account password to open it.` }),
         h('label', { class: 'field' }, h('span', { text: 'Password' }), input),
@@ -373,6 +373,47 @@ export function profileModal({ state, onUpdated, onLogout }) {
           },
           h('span', { class: 'icon-slot', html: icon('key') }),
           ' Active sessions',
+        ),
+        h(
+          'button',
+          {
+            class: 'btn btn-sm',
+            style: null,
+            onclick: async () => {
+              try {
+                await exportMyData();
+                toast('Export downloaded');
+              } catch (err) {
+                toastError(err);
+              }
+            },
+          },
+          h('span', { class: 'icon-slot', html: icon('download') }),
+          ' Export my data',
+        ),
+        h(
+          'button',
+          {
+            class: 'btn btn-sm btn-danger',
+            onclick: async () => {
+              ref.close();
+              const done = await unlockModal({
+                heading: 'Delete account',
+                message:
+                  'This permanently deletes your profile, sessions, memberships and uploaded files. Messages you sent stay in other people\u2019s conversations, without your name. This cannot be undone.',
+                confirmText: 'Delete my account',
+                onSubmit: async (password) => {
+                  await api.del('/api/users/me', { password });
+                },
+              });
+              if (done) {
+                toast('Account deleted');
+                setTimeout(() => location.reload(), 900);
+              }
+            },
+          },
+          h('span', { class: 'icon-slot', html: icon('trash') }),
+          ' Delete account',
         ),
       ),
     ],

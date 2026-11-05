@@ -1,4 +1,10 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import config from '../../config.js';
 import { all, get, run } from '../../db/index.js';
+import { decryptText } from '../../lib/crypto.js';
+import { AppError } from '../../lib/errors.js';
+import { verifyPassword } from '../../lib/password.js';
 import { audit } from '../../lib/audit.js';
 import { badRequest, conflict, notFound } from '../../lib/errors.js';
 import { toUserDTO } from '../../lib/dto.js';
@@ -87,4 +93,111 @@ export async function isBlockedBetween(a, b) {
 
 export function presenceOf(userId) {
   return { online: isOnline(userId) };
+}
+
+
+/* ------------------------- data portability & erasure ------------------------- */
+
+function safeBody(payload) {
+  if (!payload) return null;
+  try {
+    return decryptText(payload);
+  } catch {
+    return null;
+  }
+}
+
+/** Everything we hold about a user, in a shape they can actually read. */
+export async function exportUserData(userId) {
+  const user = await get('SELECT * FROM users WHERE id = ?', [userId]);
+  if (!user) throw notFound('User not found');
+
+  const memberships = await all(
+    `SELECT cm.chat_id, cm.role, cm.joined_at, c.type, c.title
+     FROM chat_members cm JOIN chats c ON c.id = cm.chat_id
+     WHERE cm.user_id = ? ORDER BY cm.joined_at`,
+    [userId],
+  );
+
+  const chats = [];
+  for (const membership of memberships) {
+    const rows = await all(
+      `SELECT m.id, m.seq, m.sender_id, m.type, m.body, m.created_at, m.edited_at, m.deleted_at, u.username AS sender_username
+       FROM messages m LEFT JOIN users u ON u.id = m.sender_id
+       WHERE m.chat_id = ? ORDER BY m.seq`,
+      [membership.chat_id],
+    );
+    const members = await all(
+      `SELECT u.username, u.display_name FROM chat_members cm JOIN users u ON u.id = cm.user_id WHERE cm.chat_id = ?`,
+      [membership.chat_id],
+    );
+    chats.push({
+      id: membership.chat_id,
+      type: membership.type,
+      title: membership.title,
+      myRole: membership.role,
+      joinedAt: membership.joined_at,
+      members: members.map((m) => ({ username: m.username, displayName: m.display_name })),
+      messages: rows.map((m) => ({
+        id: m.id,
+        seq: m.seq,
+        sender: m.sender_username ?? null,
+        type: m.type,
+        body: m.deleted_at ? null : safeBody(m.body),
+        createdAt: m.created_at,
+        editedAt: m.edited_at,
+        deletedAt: m.deleted_at,
+      })),
+    });
+  }
+
+  const attachments = await all(
+    'SELECT id, original_name, mime, size, created_at FROM attachments WHERE owner_id = ?',
+    [userId],
+  );
+
+  return {
+    exportedAt: new Date().toISOString(),
+    profile: {
+      id: user.id,
+      username: user.username,
+      displayName: user.display_name,
+      about: user.about,
+      createdAt: user.created_at,
+      lastSeenAt: user.last_seen_at,
+    },
+    chats,
+    attachments: attachments.map((a) => ({
+      id: a.id,
+      name: a.original_name,
+      mime: a.mime,
+      size: a.size,
+      createdAt: a.created_at,
+    })),
+  };
+}
+
+/**
+ * Right to erasure. Removes the profile, every session, membership, reaction,
+ * receipt and uploaded file. Messages the user sent stay in other people's
+ * conversations with the sender detached (sender_id is ON DELETE SET NULL), so
+ * a conversation is not silently rewritten for everyone else.
+ */
+export async function deleteAccount(userId, password, req) {
+  const user = await get('SELECT password_hash FROM users WHERE id = ?', [userId]);
+  const ok = user && password ? await verifyPassword(password, user.password_hash) : false;
+  if (!ok) throw new AppError(401, 'bad_password', 'That password is not correct');
+
+  const files = await all('SELECT storage_key FROM attachments WHERE owner_id = ?', [userId]);
+  await run('DELETE FROM attachments WHERE owner_id = ?', [userId]);
+  for (const file of files) {
+    await fs.unlink(path.join(config.uploadDir, file.storage_key)).catch(() => {});
+  }
+
+  await run('DELETE FROM users WHERE id = ?', [userId]);
+  // Conversations that no longer have any member are meaningless - drop them.
+  await run('DELETE FROM chats WHERE id NOT IN (SELECT chat_id FROM chat_members)');
+
+  await audit('account.deleted', { userId, req, meta: { files: files.length } });
+  return { deleted: true };
 }

@@ -6,6 +6,8 @@ import { get, run } from '../../db/index.js';
 import { badRequest, forbidden, notFound } from '../../lib/errors.js';
 import { newId } from '../../lib/ids.js';
 import { sniffMime, safeFileName } from '../../lib/files.js';
+import { normaliseImage } from '../../lib/images.js';
+import { decryptBuffer, encryptBuffer } from '../../lib/crypto.js';
 import { toAttachmentDTO } from '../../lib/dto.js';
 
 const EXT_BY_MIME = {
@@ -20,20 +22,30 @@ const EXT_BY_MIME = {
 export async function storeUpload({ userId, file }) {
   if (!file || !file.buffer?.length) throw badRequest('No file received');
 
-  const sniffed = sniffMime(file.buffer);
-  const mime = sniffed ?? 'application/octet-stream';
+  let payload = file.buffer;
+  let mime = sniffMime(file.buffer) ?? 'application/octet-stream';
+
+  // Images are decoded and re-encoded: strips EXIF/GPS, normalises orientation
+  // and destroys any payload smuggled into the file.
+  if (mime.startsWith('image/')) {
+    const normalised = await normaliseImage(payload, mime);
+    payload = normalised.buffer;
+    mime = normalised.mime;
+  }
+
   const originalName = safeFileName(file.originalname);
   const id = newId();
   const storageKey = `${id}.${EXT_BY_MIME[mime] ?? 'bin'}`;
   const target = path.join(config.uploadDir, storageKey);
 
-  // 0600 on disk, random name, stored outside the static root.
-  await fs.writeFile(target, file.buffer, { mode: 0o600, flag: 'wx' });
+  // Encrypted bytes only ever hit the disk, with 0600, under a random name,
+  // outside the static root.
+  await fs.writeFile(target, encryptBuffer(payload), { mode: 0o600, flag: 'wx' });
 
   await run(
-    `INSERT INTO attachments (id, owner_id, storage_key, original_name, mime, size, sha256, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, userId, storageKey, originalName, mime, file.buffer.length, crypto.createHash('sha256').update(file.buffer).digest('hex'), Date.now()],
+    `INSERT INTO attachments (id, owner_id, storage_key, original_name, mime, size, sha256, created_at, encrypted)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+    [id, userId, storageKey, originalName, mime, payload.length, crypto.createHash('sha256').update(payload).digest('hex'), Date.now()],
   );
 
   const row = await get('SELECT * FROM attachments WHERE id = ?', [id]);
@@ -64,6 +76,16 @@ export async function getAttachmentForUser(attachmentId, userId) {
     throw forbidden('Invalid file path');
   }
   return { row, filePath };
+}
+
+/** Reads a stored attachment back as plaintext, decrypting when needed. */
+export async function readAttachmentBytes(row) {
+  const filePath = path.join(config.uploadDir, row.storage_key);
+  if (path.dirname(path.resolve(filePath)) !== path.resolve(config.uploadDir)) {
+    throw forbidden('Invalid file path');
+  }
+  const onDisk = await fs.readFile(filePath);
+  return row.encrypted ? decryptBuffer(onDisk) : onDisk;
 }
 
 export async function deleteOrphanUpload(userId, attachmentId) {

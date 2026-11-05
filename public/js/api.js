@@ -100,6 +100,26 @@ export async function downloadAttachment(attachment) {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
+/** Downloads the account export as a file, authenticated like everything else. */
+export async function exportMyData() {
+  const res = await fetch('/api/users/me/export', {
+    credentials: 'same-origin',
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+  });
+  if (!res.ok) throw new ApiError(res.status, 'export_failed', 'Could not export your data');
+  const blob = await res.blob();
+  const disposition = res.headers.get('content-disposition') || '';
+  const name = /filename="([^"]+)"/.exec(disposition)?.[1] || 'speedy-export.json';
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
 export async function request(path, options = {}) {
   try {
     return await raw(path, options);
@@ -125,7 +145,7 @@ export const api = {
   post: (path, body, options) => request(path, { ...options, method: 'POST', body }),
   patch: (path, body, options) => request(path, { ...options, method: 'PATCH', body }),
   put: (path, body) => request(path, { method: 'PUT', body }),
-  del: (path) => request(path, { method: 'DELETE' }),
+  del: (path, body) => request(path, { method: 'DELETE', body }),
 
   async upload(file) {
     const form = new FormData();

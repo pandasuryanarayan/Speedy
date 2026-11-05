@@ -80,6 +80,10 @@ export const config = Object.freeze({
   jwtAudience: 'speedy-web',
   accessTokenTtl: Number.parseInt(process.env.ACCESS_TOKEN_TTL || '900', 10), // 15 minutes
   refreshTokenTtl: Number.parseInt(process.env.REFRESH_TOKEN_TTL || String(60 * 60 * 24 * 30), 10), // 30 days
+  // A session dies after this much inactivity, whatever its expiry says.
+  sessionIdleMs: Number.parseInt(process.env.SESSION_IDLE_MINUTES || '30', 10) * 60_000,
+  // ...and after this long in total, refresh rotation or not.
+  sessionAbsoluteMs: Number.parseInt(process.env.SESSION_ABSOLUTE_DAYS || '30', 10) * 24 * 60 * 60_000,
 
   trustProxy: process.env.TRUST_PROXY ? Number.parseInt(process.env.TRUST_PROXY, 10) : 0,
   logLevel: process.env.LOG_LEVEL || (isProd ? 'info' : 'debug'),
