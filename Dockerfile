@@ -1,13 +1,13 @@
 # syntax=docker/dockerfile:1
 
 # ---- dependencies ----------------------------------------------------------
-FROM node:20-slim AS deps
+FROM node:25-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev --no-audit --no-fund || npm install --omit=dev --no-audit --no-fund
 
 # ---- runtime ---------------------------------------------------------------
-FROM node:20-slim
+FROM node:25-slim
 ENV NODE_ENV=production \
     PORT=3000 \
     DATA_DIR=/app/data
