@@ -28,6 +28,7 @@ policy, and no managed service in the dependency chain.
 - [API](#api)
 - [Testing](#testing)
 - [Data protection and compliance](#data-protection-and-compliance)
+- [Contributing](#contributing)
 - [Limitations and roadmap](#limitations-and-roadmap)
 - [License](#license)
 
@@ -387,6 +388,13 @@ a key directory with verification, group key distribution, recovery for a lost d
 that server-side search, previews and moderation stop working. Shipping a half-version that silently
 falls back to server-readable messages would be worse than shipping none, so it is scoped as its own
 piece of work rather than claimed here.
+
+## Contributing
+
+Contributions are welcome through pull requests — fork, branch, open a PR against `main`; nobody
+pushes to `main` directly and CI has to be green. The full rules, code style and what tends to be
+accepted are in [CONTRIBUTING.md](CONTRIBUTING.md). Security issues go through the private advisory
+link in [.github/SECURITY.md](.github/SECURITY.md), never a public issue.
 
 ## License
 
