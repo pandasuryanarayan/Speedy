@@ -74,7 +74,10 @@ export function createApp() {
     }),
   );
 
-  app.get('*', (req, res, next) => {
+  // SPA fallback. Express 5 uses path-to-regexp v8 where a bare '*' is not a
+  // valid route, so this is a path-less middleware restricted to GET/HEAD.
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
     if (req.path.startsWith('/socket.io')) return next();
     res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(path.join(config.publicDir, 'index.html'));
