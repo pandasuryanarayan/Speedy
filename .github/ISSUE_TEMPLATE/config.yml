@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/pandasuryanarayan/Speedy/security/advisories/new
+    about: Please report security issues privately, not as a public issue.
+  - name: Deployment and configuration help
+    url: https://github.com/pandasuryanarayan/Speedy/blob/main/docs/DEPLOY.md
+    about: Read the deployment runbook before opening an issue.
