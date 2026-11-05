@@ -248,6 +248,26 @@ export function createChatPane(handlers) {
     }
     composerEl.classList.remove('hidden');
 
+    if (chat.blockedByMe || chat.blockedMe) {
+      composerEl.replaceChildren(
+        h(
+          'div',
+          { class: 'composer-blocked' },
+          h('span', {
+            class: 'grow',
+            text: chat.blockedByMe
+              ? `You blocked ${chat.title}. Unblock to send messages.`
+              : `${chat.title} has blocked you, so you cannot send messages.`,
+          }),
+          chat.blockedByMe
+            ? h('button', { type: 'button', class: 'btn btn-sm', text: 'Unblock', onclick: () => handlers.onUnblock?.() })
+            : null,
+        ),
+      );
+      composerEl.onsubmit = null;
+      return;
+    }
+
     const fileInput = h('input', {
       type: 'file',
       class: 'sr-only',

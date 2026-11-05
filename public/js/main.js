@@ -78,6 +78,9 @@ function buildShell() {
     onLoadMore: loadOlder,
     onAttach,
     onDownload: (attachment) => downloadAttachment(attachment).catch(toastError),
+    onUnblock: () => {
+      if (state.chat) unblockPeer(state.chat);
+    },
     onCancelAttachment: () => setState({ pendingAttachment: null }),
     onNewChat: newChat,
     onNotify: (message, type) => toast(message, { type }),
@@ -91,11 +94,8 @@ function buildShell() {
       if (state.activeChatId === chatId) closeChat();
       refreshChats();
     },
-    onBlocked: (chatId) => {
-      setState({ panelOpen: false });
-      if (state.activeChatId === chatId) closeChat();
-      refreshChats();
-    },
+    onBlocked: (chatId) => refreshChatDetail(chatId),
+    onUnblocked: (chatId) => refreshChatDetail(chatId),
     onPin: togglePin,
     onLock: toggleLock,
     onManage: () => {
@@ -377,6 +377,26 @@ async function newGroup() {
     const data = await api.post('/api/chats/group', { title, memberIds: ids });
     await refreshChats();
     await openChat(data.chat.id);
+  } catch (err) {
+    toastError(err);
+  }
+}
+
+async function refreshChatDetail(chatId) {
+  await refreshChats();
+  try {
+    const detail = await api.get(`/api/chats/${chatId}`);
+    if (state.activeChatId === chatId) setState({ chat: detail.chat });
+  } catch (err) {
+    toastError(err);
+  }
+}
+
+async function unblockPeer(chat) {
+  try {
+    await api.del(`/api/users/${chat.peer.id}/block`);
+    toast(`${chat.title} unblocked`);
+    await refreshChatDetail(chat.id);
   } catch (err) {
     toastError(err);
   }

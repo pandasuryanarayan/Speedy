@@ -144,6 +144,20 @@ export async function getChatDetail(userId, chatId) {
   const members = rows.map((r) => ({ ...toUserDTO(r, { viewerId: userId }), role: r.role, joinedAt: r.joined_at, muted: Boolean(r.muted) }));
   const peer = chat.type === 'direct' ? members.find((m) => m.id !== userId) ?? null : null;
 
+  // Whether *I* blocked the other person (not the reverse), so the UI can offer
+  // Unblock instead of Block.
+  let blockedByMe = false;
+  let blockedMe = false;
+  if (peer) {
+    const rowsBlocked = await all(
+      `SELECT blocker_id FROM blocks
+       WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)`,
+      [userId, peer.id, peer.id, userId],
+    );
+    blockedByMe = rowsBlocked.some((r) => r.blocker_id === userId);
+    blockedMe = rowsBlocked.some((r) => r.blocker_id === peer.id);
+  }
+
   return {
     id: chat.id,
     type: chat.type,
@@ -155,6 +169,8 @@ export async function getChatDetail(userId, chatId) {
     muted: Boolean(member.muted),
     pinned: Boolean(member.pinned),
     locked: Boolean(member.locked),
+    blockedByMe,
+    blockedMe,
     createdAt: chat.created_at,
   };
 }

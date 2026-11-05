@@ -567,6 +567,38 @@ test('backups are written, verified and can be restored', async () => {
   restored.close();
 });
 
+test('blocking a contact is reflected in the conversation and can be undone', async () => {
+  const me = await newUser('blake');
+  const other = await newUser('cora');
+  const chat = await me.api.call('/api/chats/direct', { method: 'POST', token: me.token, body: { userId: other.user.id } });
+  const chatId = chat.body.chat.id;
+  await me.api.call(`/api/chats/${chatId}/messages`, { method: 'POST', token: me.token, body: { type: 'text', body: 'before the block' } });
+
+  let detail = await me.api.call(`/api/chats/${chatId}`, { token: me.token });
+  assert.equal(detail.body.chat.blockedByMe, false, 'not blocked to start with');
+
+  const blocked = await me.api.call(`/api/users/${other.user.id}/block`, { method: 'POST', token: me.token, body: {} });
+  assert.equal(blocked.status, 204);
+
+  detail = await me.api.call(`/api/chats/${chatId}`, { token: me.token });
+  assert.equal(detail.body.chat.blockedByMe, true, 'the UI needs this to offer Unblock');
+
+  const send = await me.api.call(`/api/chats/${chatId}/messages`, { method: 'POST', token: me.token, body: { type: 'text', body: 'nope' } });
+  assert.equal(send.status, 403, 'blocked contact cannot be messaged');
+
+  const double = await me.api.call(`/api/users/${other.user.id}/block`, { method: 'POST', token: me.token, body: {} });
+  assert.equal(double.status, 409, 'blocking twice is rejected');
+
+  const unblocked = await me.api.call(`/api/users/${other.user.id}/block`, { method: 'DELETE', token: me.token });
+  assert.equal(unblocked.status, 204);
+
+  detail = await me.api.call(`/api/chats/${chatId}`, { token: me.token });
+  assert.equal(detail.body.chat.blockedByMe, false, 'unblocking clears the flag');
+
+  const sendAgain = await me.api.call(`/api/chats/${chatId}/messages`, { method: 'POST', token: me.token, body: { type: 'text', body: 'after the unblock' } });
+  assert.equal(sendAgain.status, 201, 'messages work again');
+});
+
 test('security headers and rate limiting are wired up', async () => {
   const res = await fetch(`${baseUrl}/healthz`);
   assert.equal(res.status, 200);

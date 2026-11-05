@@ -3,7 +3,7 @@ import { api } from '../api.js';
 import { confirmDialog } from './modals.js';
 import { toast, toastError } from './toast.js';
 
-export function createInfoPanel({ onClose, onChanged, onLeft, onBlocked, onManage, onPin, onLock }) {
+export function createInfoPanel({ onClose, onChanged, onLeft, onBlocked, onUnblocked, onManage, onPin, onLock }) {
   const body = h('div');
   const el = h(
     'aside',
@@ -99,20 +99,51 @@ export function createInfoPanel({ onClose, onChanged, onLeft, onBlocked, onManag
         ),
         !isGroup
           ? h('div', { class: 'info-row' },
-              h('span', { class: 'grow' }, h('span', { class: 'name', text: 'Block contact' }), h('span', { class: 'sub', text: 'They can no longer message you' })),
-              h('button', {
-                class: 'btn btn-sm btn-danger',
-                text: 'Block',
-                onclick: async () => {
-                  const ok = await confirmDialog({ title: 'Block contact', message: `Block ${chat.title}? They will not be able to message you.`, confirmText: 'Block', danger: true });
-                  if (!ok) return;
-                  try {
-                    await api.post(`/api/users/${chat.peer.id}/block`, {});
-                    toast('Contact blocked');
-                    onBlocked?.(chat.id);
-                  } catch (err) { toastError(err); }
-                },
-              }),
+              h(
+                'span',
+                { class: 'grow' },
+                h('span', { class: 'name', text: chat.blockedByMe ? 'Unblock contact' : 'Block contact' }),
+                h('span', {
+                  class: 'sub',
+                  text: chat.blockedByMe
+                    ? 'They cannot message you'
+                    : 'They can no longer message you',
+                }),
+              ),
+              chat.blockedByMe
+                ? h('button', {
+                    class: 'btn btn-sm',
+                    text: 'Unblock',
+                    onclick: async () => {
+                      try {
+                        await api.del(`/api/users/${chat.peer.id}/block`);
+                        toast(`${chat.title} unblocked`);
+                        onUnblocked?.(chat.id);
+                      } catch (err) {
+                        toastError(err);
+                      }
+                    },
+                  })
+                : h('button', {
+                    class: 'btn btn-sm btn-danger',
+                    text: 'Block',
+                    onclick: async () => {
+                      const ok = await confirmDialog({
+                        title: 'Block contact',
+                        message: `Block ${chat.title}? They will not be able to message you.`,
+                        confirmText: 'Block',
+                        danger: true,
+                      });
+                      if (!ok) return;
+                      try {
+                        await api.post(`/api/users/${chat.peer.id}/block`, {});
+                        toast('Contact blocked');
+                        onBlocked?.(chat.id);
+                      } catch (err) {
+                        toastError(err);
+                      }
+                    },
+                  }),
             )
           : null,
       ),

@@ -67,7 +67,7 @@ Empty `q` returns everyone (used to populate pickers).
 | GET | `/chats` | | Sidebar payload: title, avatar, unread, last message, members |
 | POST | `/chats/direct` | `{ userId }` | Idempotent; returns the existing chat |
 | POST | `/chats/group` | `{ title, memberIds[] }` | You become `owner` |
-| GET | `/chats/:id` | | Detail with members and roles |
+| GET | `/chats/:id` | | Detail with members and roles; direct chats also report `blockedByMe` / `blockedMe` |
 | PATCH | `/chats/:id` | `{ title }` | Admin/owner, groups only |
 | POST | `/chats/:id/members` | `{ memberIds[] }` | Admin/owner |
 | DELETE | `/chats/:id/members/:userId` | | Admin/owner, cannot remove the owner |
