@@ -480,7 +480,7 @@ ul { margin: 0; padding: 0; list-style: none; }
   animation: fade 0.14s var(--ease);
 }
 .modal {
-  width: 100%; max-width: 448px; max-height: min(86vh, 720px);
+  width: 100%; max-width: 448px; max-height: min(88vh, 840px);
   display: flex; flex-direction: column; overflow: hidden;
   background: var(--surface); border-radius: 20px; box-shadow: var(--shadow-lg);
   border: 1px solid var(--border); animation: pop 0.18s var(--ease);
