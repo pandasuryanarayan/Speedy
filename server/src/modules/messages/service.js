@@ -6,7 +6,7 @@ import { newId } from '../../lib/ids.js';
 import { toAttachmentDTO, toMessageDTO } from '../../lib/dto.js';
 import { isOnline } from '../../lib/presence.js';
 import { bus, EVENTS } from '../../realtime/bus.js';
-import { assertMember, directPeer, getChat, memberCount, memberIds } from '../chats/service.js';
+import { assertMember, assertUnlocked, directPeer, getChat, memberCount, memberIds } from '../chats/service.js';
 import { isBlockedBetween } from '../users/service.js';
 
 const MAX_BODY = config.maxMessageLength;
@@ -114,8 +114,9 @@ function safeDecrypt(payload) {
   }
 }
 
-export async function listMessages(userId, chatId, { before, limit = config.messagePageSize } = {}) {
-  await assertMember(chatId, userId);
+export async function listMessages(userId, chatId, { before, limit = config.messagePageSize, unlockToken } = {}) {
+  const member = await assertMember(chatId, userId);
+  assertUnlocked(member, chatId, userId, unlockToken);
   const rows = await all(
     'SELECT * FROM messages WHERE chat_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?',
     [chatId, before ?? 2 ** 40, limit],
@@ -141,8 +142,9 @@ async function resolveAttachment(userId, attachmentId) {
 }
 
 export async function sendMessage(userId, input) {
-  const { chatId, type = 'text', body, attachmentId, replyToId, clientId } = input;
-  await assertMember(chatId, userId);
+  const { chatId, type = 'text', body, attachmentId, replyToId, clientId, unlockToken } = input;
+  const member = await assertMember(chatId, userId);
+  assertUnlocked(member, chatId, userId, unlockToken);
   const chat = await getChat(chatId);
 
   if (chat.type === 'direct') {
@@ -302,8 +304,9 @@ export async function markRead(userId, chatId, { messageId, seq } = {}) {
 }
 
 /** Search decrypts a bounded window of recent messages (bodies are encrypted at rest). */
-export async function searchMessages(userId, chatId, query) {
-  await assertMember(chatId, userId);
+export async function searchMessages(userId, chatId, query, unlockToken) {
+  const member = await assertMember(chatId, userId);
+  assertUnlocked(member, chatId, userId, unlockToken);
   const needle = query.toLowerCase();
   const rows = await all(
     'SELECT * FROM messages WHERE chat_id = ? AND type = ? AND deleted_at IS NULL ORDER BY seq DESC LIMIT 400',

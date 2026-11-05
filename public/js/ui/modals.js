@@ -205,6 +205,73 @@ export function peoplePicker({ title, confirmText = 'Start chat', excludeIds = [
   });
 }
 
+/**
+ * Password prompt for a locked chat. The modal owns the async submit so a wrong
+ * password keeps the dialog open with an inline error instead of closing it.
+ * Resolves true when onSubmit succeeds, false when cancelled.
+ */
+export function unlockModal({ title, message, onSubmit }) {
+  return new Promise((resolve) => {
+    let done = false;
+    let busy = false;
+    const input = h('input', {
+      class: 'input',
+      type: 'password',
+      placeholder: 'Your account password',
+      autocomplete: 'current-password',
+    });
+    const error = h('span', { class: 'field-error' });
+    const submitBtn = h('button', { class: 'btn btn-primary', text: 'Unlock' });
+
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      ref.close();
+      resolve(value);
+    };
+
+    const submit = async () => {
+      if (busy) return;
+      const password = input.value;
+      if (!password) {
+        error.textContent = 'Enter your password';
+        return;
+      }
+      busy = true;
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Checking…';
+      error.textContent = '';
+      try {
+        await onSubmit(password);
+        finish(true);
+      } catch (err) {
+        error.textContent = err?.message || 'That did not work';
+        input.select();
+      } finally {
+        busy = false;
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Unlock';
+      }
+    };
+
+    submitBtn.addEventListener('click', submit);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submit();
+    });
+
+    const ref = openModal({
+      title: 'Locked chat',
+      body: [
+        h('p', { class: 'modal-lead muted', text: message || `“${title}” is locked. Enter your account password to open it.` }),
+        h('label', { class: 'field' }, h('span', { text: 'Password' }), input),
+        error,
+      ],
+      footer: [h('button', { class: 'btn btn-ghost', text: 'Cancel', onclick: () => finish(false) }), submitBtn],
+      onClose: () => finish(false),
+    });
+  });
+}
+
 export function lightbox(src) {
   const close = () => {
     box.remove();

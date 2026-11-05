@@ -83,6 +83,32 @@ chatsRouter.post(
 );
 
 chatsRouter.patch(
+  '/:id/pin',
+  writeLimiter,
+  asyncHandler(async (req, res) => {
+    res.json({ data: await chats.setPinned(req.user.id, req.params.id, Boolean(req.body?.pinned)) });
+  }),
+);
+
+chatsRouter.post(
+  '/:id/lock',
+  writeLimiter,
+  asyncHandler(async (req, res) => {
+    const locked = Boolean(req.body?.locked);
+    const password = typeof req.body?.password === 'string' ? req.body.password : undefined;
+    res.json({ data: await chats.setLocked(req.user.id, req.params.id, { locked, password }) });
+  }),
+);
+
+chatsRouter.post(
+  '/:id/unlock',
+  asyncHandler(async (req, res) => {
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    res.json({ data: await chats.unlockChat(req.user.id, req.params.id, { password }) });
+  }),
+);
+
+chatsRouter.patch(
   '/:id/mute',
   asyncHandler(async (req, res) => {
     res.json({ data: await chats.setMuted(req.user.id, req.params.id, Boolean(req.body?.muted)) });

@@ -23,6 +23,8 @@ small, boring, well-understood stack and hardened with modern security defaults.
 - Image and file attachments (10 MB default), inline image previews, lightbox
 - In-conversation message search
 - Unread badges, per-chat mute, chat filters (All / Unread / Groups)
+- Pin conversations to the top of the list
+- Lock a chat behind your account password — it asks again on every open
 
 **Accounts & groups**
 - Username + password accounts (no phone number, no email required)

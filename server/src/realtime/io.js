@@ -103,6 +103,7 @@ export function createRealtime(httpServer) {
       try {
         if (!takeToken(socket)) throw new AppError(429, 'rate_limited', 'You are sending messages too quickly');
         const payload = parse(schemas.sendMessage, input);
+        payload.unlockToken = payload.unlock;
         const message = await messages.sendMessage(userId, payload);
         ack(cb)({ ok: true, message });
       } catch (err) {

@@ -124,4 +124,9 @@ export const MIGRATIONS = [
   );
   CREATE INDEX idx_audit_created ON audit_log(created_at DESC);
   `,
+  // 2 - per-member chat pinning and locking
+  `
+  ALTER TABLE chat_members ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE chat_members ADD COLUMN locked INTEGER NOT NULL DEFAULT 0;
+  `,
 ];

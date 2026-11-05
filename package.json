@@ -1,6 +1,6 @@
 {
   "name": "speedy-chat",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "private": true,
   "description": "Speedy - a production-ready WhatsApp-style chat app (Node.js, Socket.IO, SQLite, vanilla ES modules).",
   "type": "module",

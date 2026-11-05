@@ -7,6 +7,9 @@ import * as messages from './service.js';
 
 export const messagesRouter = Router();
 
+/** Locked chats accept a short-lived token minted by POST /chats/:id/unlock. */
+const unlockOf = (req) => req.get('x-chat-unlock') || undefined;
+
 // requireAuth is applied per route (not via router.use) so that unknown /api
 // paths still fall through to the JSON 404 handler instead of a 401.
 
@@ -15,7 +18,13 @@ messagesRouter.get(
   requireAuth,
   asyncHandler(async (req, res) => {
     const { before, limit } = parse(schemas.listMessages, req.query);
-    res.json({ data: await messages.listMessages(req.user.id, req.params.chatId, { before, limit }) });
+    res.json({
+      data: await messages.listMessages(req.user.id, req.params.chatId, {
+        before,
+        limit,
+        unlockToken: unlockOf(req),
+      }),
+    });
   }),
 );
 
@@ -24,7 +33,8 @@ messagesRouter.post(
   requireAuth,
   writeLimiter,
   asyncHandler(async (req, res) => {
-    const input = parse(schemas.sendMessage, { ...req.body, chatId: req.params.chatId });
+    const input = parse(schemas.sendMessage, { ...req.body, chatId: req.params.chatId, unlock: unlockOf(req) });
+    input.unlockToken = input.unlock;
     res.status(201).json({ data: { message: await messages.sendMessage(req.user.id, input) } });
   }),
 );
@@ -34,7 +44,9 @@ messagesRouter.get(
   requireAuth,
   asyncHandler(async (req, res) => {
     const { q } = parse(schemas.searchMessages, req.query);
-    res.json({ data: { messages: await messages.searchMessages(req.user.id, req.params.chatId, q) } });
+    res.json({
+      data: { messages: await messages.searchMessages(req.user.id, req.params.chatId, q, unlockOf(req)) },
+    });
   }),
 );
 

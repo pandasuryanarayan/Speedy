@@ -60,6 +60,9 @@ const ICONS = {
   eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
   ban: '<circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/>',
   key: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9-9"/><path d="m15 5 3 3"/><path d="m18 2 3 3"/>',
+  pin: '<path d="M12 17v5"/><path d="M9 10.8V4h6v6.8l3 3.2H6l3-3.2Z"/>',
+  lock: '<rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/>',
+  unlock: '<rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7.5a4 4 0 0 1 7.5-2"/>',
 };
 
 export function icon(name, cls = '') {

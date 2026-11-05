@@ -40,8 +40,8 @@ function client() {
   const cookies = new Map();
   return {
     cookies,
-    async call(pathname, { method = 'GET', body, token, form } = {}) {
-      const headers = { Accept: 'application/json' };
+    async call(pathname, { method = 'GET', body, token, form, headers: extra = {} } = {}) {
+      const headers = { Accept: 'application/json', ...extra };
       if (body) headers['Content-Type'] = 'application/json';
       if (token) headers.Authorization = `Bearer ${token}`;
       if (cookies.has('speedy_csrf')) headers['X-CSRF-Token'] = cookies.get('speedy_csrf');
@@ -339,6 +339,84 @@ test('read receipts are recorded when a recipient marks the chat read', async ()
   const message = view.body.messages.find((m) => m.id === sent.body.message.id);
   assert.equal(message.receipts.status, 'read');
   assert.equal(message.receipts.read, 1);
+});
+
+test('chats can be pinned to the top of the list', async () => {
+  const me = await newUser('piper');
+  const a = await newUser('quinn');
+  const b = await newUser('rita');
+
+  const first = await me.api.call('/api/chats/direct', { method: 'POST', token: me.token, body: { userId: a.user.id } });
+  await me.api.call(`/api/chats/${first.body.chat.id}/messages`, { method: 'POST', token: me.token, body: { type: 'text', body: 'older' } });
+  const second = await me.api.call('/api/chats/direct', { method: 'POST', token: me.token, body: { userId: b.user.id } });
+  await new Promise((r) => setTimeout(r, 15));
+  await me.api.call(`/api/chats/${second.body.chat.id}/messages`, { method: 'POST', token: me.token, body: { type: 'text', body: 'newer' } });
+
+  let list = await me.api.call('/api/chats', { token: me.token });
+  assert.equal(list.body.chats[0].id, second.body.chat.id, 'most recent first by default');
+
+  const pinned = await me.api.call(`/api/chats/${first.body.chat.id}/pin`, { method: 'PATCH', token: me.token, body: { pinned: true } });
+  assert.equal(pinned.status, 200);
+  assert.equal(pinned.body.pinned, true);
+
+  list = await me.api.call('/api/chats', { token: me.token });
+  assert.equal(list.body.chats[0].id, first.body.chat.id, 'pinned chat jumps to the top');
+  assert.equal(list.body.chats[0].pinned, true);
+
+  await me.api.call(`/api/chats/${first.body.chat.id}/pin`, { method: 'PATCH', token: me.token, body: { pinned: false } });
+  list = await me.api.call('/api/chats', { token: me.token });
+  assert.equal(list.body.chats[0].id, second.body.chat.id, 'unpinning restores time order');
+});
+
+test('a locked chat needs the account password to open', async () => {
+  const me = await newUser('sam');
+  const other = await newUser('tina');
+  const chat = await me.api.call('/api/chats/direct', { method: 'POST', token: me.token, body: { userId: other.user.id } });
+  const chatId = chat.body.chat.id;
+  await me.api.call(`/api/chats/${chatId}/messages`, { method: 'POST', token: me.token, body: { type: 'text', body: 'private plans' } });
+
+  const locked = await me.api.call(`/api/chats/${chatId}/lock`, { method: 'POST', token: me.token, body: { locked: true } });
+  assert.equal(locked.status, 200);
+
+  const blocked = await me.api.call(`/api/chats/${chatId}/messages`, { token: me.token });
+  assert.equal(blocked.status, 423, 'locked chats refuse to list messages');
+  assert.equal(blocked.error.code, 'chat_locked');
+
+  const send = await me.api.call(`/api/chats/${chatId}/messages`, { method: 'POST', token: me.token, body: { type: 'text', body: 'nope' } });
+  assert.equal(send.status, 423);
+
+  const list = await me.api.call('/api/chats', { token: me.token });
+  const entry = list.body.chats.find((c) => c.id === chatId);
+  assert.equal(entry.locked, true);
+  assert.equal(entry.lastMessage, null, 'a locked chat does not leak its last message');
+
+  const wrong = await me.api.call(`/api/chats/${chatId}/unlock`, { method: 'POST', token: me.token, body: { password: 'not-my-password' } });
+  assert.equal(wrong.status, 401);
+  assert.equal(wrong.error.code, 'bad_password');
+
+  const right = await me.api.call(`/api/chats/${chatId}/unlock`, { method: 'POST', token: me.token, body: { password: 'test-password-123' } });
+  assert.equal(right.status, 200);
+  const token = right.body.unlockToken;
+  assert.ok(token);
+
+  const opened = await me.api.call(`/api/chats/${chatId}/messages`, { token: me.token, headers: { 'X-Chat-Unlock': token } });
+  assert.equal(opened.status, 200);
+  assert.equal(opened.body.messages.at(-1).body, 'private plans');
+
+  const badToken = await me.api.call(`/api/chats/${chatId}/messages`, { token: me.token, headers: { 'X-Chat-Unlock': `${token}tampered` } });
+  assert.equal(badToken.status, 423, 'a tampered unlock token is rejected');
+
+  // the other member is unaffected by my lock
+  const theirView = await other.api.call(`/api/chats/${chatId}/messages`, { token: other.token });
+  assert.equal(theirView.status, 200);
+
+  // removing the lock also requires the password
+  const noPassword = await me.api.call(`/api/chats/${chatId}/lock`, { method: 'POST', token: me.token, body: { locked: false } });
+  assert.equal(noPassword.status, 401);
+  const removed = await me.api.call(`/api/chats/${chatId}/lock`, { method: 'POST', token: me.token, body: { locked: false, password: 'test-password-123' } });
+  assert.equal(removed.status, 200);
+  const afterRemoval = await me.api.call(`/api/chats/${chatId}/messages`, { token: me.token });
+  assert.equal(afterRemoval.status, 200);
 });
 
 test('security headers and rate limiting are wired up', async () => {

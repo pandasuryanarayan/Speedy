@@ -1,9 +1,11 @@
 import { all, get, run, tx } from '../../db/index.js';
 import { audit } from '../../lib/audit.js';
 import { decryptText } from '../../lib/crypto.js';
-import { badRequest, conflict, forbidden, notFound } from '../../lib/errors.js';
+import { AppError, badRequest, conflict, forbidden, notFound } from '../../lib/errors.js';
 import { newId } from '../../lib/ids.js';
 import { attachmentUrl, toUserDTO } from '../../lib/dto.js';
+import { verifyPassword } from '../../lib/password.js';
+import { signChatUnlock, verifyChatUnlock } from '../../lib/signed.js';
 import { bus, EVENTS } from '../../realtime/bus.js';
 import { isBlockedBetween } from '../users/service.js';
 import config from '../../config.js';
@@ -58,7 +60,7 @@ function previewOf(chatRow) {
 export async function listChats(userId) {
   const chats = await all(
     `SELECT c.id, c.type, c.title, c.avatar_attachment_id, c.seq, c.created_at, c.updated_at,
-            cm.role, cm.last_read_seq, cm.last_read_at, cm.muted,
+            cm.role, cm.last_read_seq, cm.last_read_at, cm.muted, cm.pinned, cm.locked,
             lm.id AS last_id, lm.seq AS last_seq, lm.type AS last_type, lm.body AS last_body,
             lm.created_at AS last_at, lm.sender_id AS last_sender, lm.deleted_at AS last_deleted,
             (SELECT COUNT(*) FROM messages m
@@ -68,7 +70,7 @@ export async function listChats(userId) {
      JOIN chats c ON c.id = cm.chat_id
      LEFT JOIN messages lm ON lm.id = (SELECT id FROM messages WHERE chat_id = c.id ORDER BY seq DESC LIMIT 1)
      WHERE cm.user_id = ?
-     ORDER BY COALESCE(lm.created_at, c.created_at) DESC`,
+     ORDER BY cm.pinned DESC, COALESCE(lm.created_at, c.created_at) DESC`,
     [userId, userId],
   );
 
@@ -107,11 +109,15 @@ export async function listChats(userId) {
       members: chatMembers,
       role: c.role,
       muted: Boolean(c.muted),
+      pinned: Boolean(c.pinned),
+      locked: Boolean(c.locked),
       unread: Number(c.unread ?? 0),
       lastReadSeq: Number(c.last_read_seq ?? 0),
       createdAt: c.created_at,
       updatedAt: c.updated_at,
-      lastMessage: c.last_id
+      lastMessage: c.locked
+        ? null
+        : c.last_id
         ? {
             id: c.last_id,
             seq: Number(c.last_seq),
@@ -130,7 +136,7 @@ export async function getChatDetail(userId, chatId) {
   const chat = await getChat(chatId);
   const member = await assertMember(chatId, userId);
   const rows = await all(
-    `SELECT cm.role, cm.joined_at, cm.last_read_seq, cm.muted, ${USER_COLS}
+    `SELECT cm.role, cm.joined_at, cm.last_read_seq, cm.muted, cm.pinned, cm.locked, ${USER_COLS}
      FROM chat_members cm JOIN users u ON u.id = cm.user_id
      WHERE cm.chat_id = ? ORDER BY CASE cm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, u.display_name`,
     [chatId],
@@ -147,6 +153,8 @@ export async function getChatDetail(userId, chatId) {
     members,
     myRole: member.role,
     muted: Boolean(member.muted),
+    pinned: Boolean(member.pinned),
+    locked: Boolean(member.locked),
     createdAt: chat.created_at,
   };
 }
@@ -327,4 +335,53 @@ export async function setMuted(userId, chatId, muted) {
   await assertMember(chatId, userId);
   await run('UPDATE chat_members SET muted = ? WHERE chat_id = ? AND user_id = ?', [muted ? 1 : 0, chatId, userId]);
   return { muted: Boolean(muted) };
+}
+
+/** Pinning is personal to the member, so it never touches the chat itself. */
+export async function setPinned(userId, chatId, pinned) {
+  await assertMember(chatId, userId);
+  await run('UPDATE chat_members SET pinned = ? WHERE chat_id = ? AND user_id = ?', [pinned ? 1 : 0, chatId, userId]);
+  return { pinned: Boolean(pinned) };
+}
+
+async function assertPassword(userId, password) {
+  const user = await get('SELECT password_hash FROM users WHERE id = ?', [userId]);
+  const ok = user && password ? await verifyPassword(password, user.password_hash) : false;
+  if (!ok) throw new AppError(401, 'bad_password', 'That password is not correct');
+}
+
+/**
+ * Locking hides the conversation behind the account password. The `locked`
+ * flag stays set while unlocked - the token returned by unlockChat() is what
+ * grants temporary access, so closing the tab re-locks the chat.
+ */
+export async function setLocked(userId, chatId, { locked, password }) {
+  await assertMember(chatId, userId);
+
+  if (locked) {
+    await run('UPDATE chat_members SET locked = 1 WHERE chat_id = ? AND user_id = ?', [chatId, userId]);
+    await audit('chat.locked', { userId, meta: { chatId } });
+    return { locked: true };
+  }
+
+  await assertPassword(userId, password);
+  await run('UPDATE chat_members SET locked = 0 WHERE chat_id = ? AND user_id = ?', [chatId, userId]);
+  await audit('chat.unlocked_permanently', { userId, meta: { chatId } });
+  return { locked: false };
+}
+
+export async function unlockChat(userId, chatId, { password }) {
+  const member = await assertMember(chatId, userId);
+  if (!member.locked) return { locked: false, unlockToken: null };
+
+  await assertPassword(userId, password);
+  await audit('chat.unlocked', { userId, meta: { chatId } });
+  return { locked: true, unlockToken: signChatUnlock(chatId, userId) };
+}
+
+/** Throws 423 when a chat is locked and the caller has no valid unlock token. */
+export function assertUnlocked(member, chatId, userId, unlockToken) {
+  if (!member.locked) return;
+  if (verifyChatUnlock(chatId, userId, unlockToken)) return;
+  throw new AppError(423, 'chat_locked', 'This chat is locked. Enter your password to open it.');
 }

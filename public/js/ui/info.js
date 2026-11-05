@@ -3,7 +3,7 @@ import { api } from '../api.js';
 import { confirmDialog } from './modals.js';
 import { toast, toastError } from './toast.js';
 
-export function createInfoPanel({ onClose, onChanged, onLeft, onBlocked, onManage }) {
+export function createInfoPanel({ onClose, onChanged, onLeft, onBlocked, onManage, onPin, onLock }) {
   const body = h('div');
   const el = h(
     'aside',
@@ -61,6 +61,28 @@ export function createInfoPanel({ onClose, onChanged, onLeft, onBlocked, onManag
     rows.push(
       h('div', { class: 'info-section' },
         h('h5', { text: 'Preferences' }),
+        h('div', { class: 'info-row' },
+          h('span', { class: 'grow' },
+            h('span', { class: 'name', text: 'Pin chat' }),
+            h('span', { class: 'sub', text: chat.pinned ? 'Pinned to the top of your list' : 'Keep this chat at the top' }),
+          ),
+          h('button', {
+            class: 'btn btn-sm',
+            text: chat.pinned ? 'Unpin' : 'Pin',
+            onclick: () => onPin?.(chat),
+          }),
+        ),
+        h('div', { class: 'info-row' },
+          h('span', { class: 'grow' },
+            h('span', { class: 'name', text: 'Lock chat' }),
+            h('span', { class: 'sub', text: chat.locked ? 'Password required to open' : 'Hide behind your account password' }),
+          ),
+          h('button', {
+            class: 'btn btn-sm',
+            text: chat.locked ? 'Remove lock' : 'Lock',
+            onclick: () => onLock?.(chat),
+          }),
+        ),
         h('div', { class: 'info-row' },
           h('span', { class: 'grow' }, h('span', { class: 'name', text: 'Mute notifications' }), h('span', { class: 'sub', text: 'Only affects your device' })),
           h('button', {

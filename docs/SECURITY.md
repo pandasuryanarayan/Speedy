@@ -61,6 +61,7 @@ layer (put a CDN/WAF in front).
 | Change roles | `owner` only; the owner cannot be demoted or removed |
 | Upload | Own attachment only; can only send attachments you uploaded |
 | Download attachment | Owner, a member of a chat where it is used, or it is someone's avatar |
+| Read or send in a locked chat | Member **and** a valid `X-Chat-Unlock` token (30 min, bound to user + chat, minted only after a password check) |
 
 Attachment URLs handed to the browser carry `?t=<userId>.<expiry>.<hmac>`: an
 HMAC-SHA256 signature over the attachment id, the viewer's id and an expiry,

@@ -58,6 +58,7 @@ export const schemas = {
     body: z.string().max(4000).optional(),
     attachmentId: z.string().uuid().optional(),
     replyToId: z.string().uuid().optional(),
+    unlock: z.string().max(200).optional(),
   }),
   editMessage: z.object({ body: z.string().trim().min(1).max(4000) }),
   react: z.object({ emoji: z.string().min(1).max(16) }),

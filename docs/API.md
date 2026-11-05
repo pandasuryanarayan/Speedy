@@ -74,6 +74,14 @@ Empty `q` returns everyone (used to populate pickers).
 | PATCH | `/chats/:id/members/:userId` | `{ role: "admin"\|"member" }` | Owner only |
 | POST | `/chats/:id/leave` | | Transfers ownership if the owner leaves |
 | PATCH | `/chats/:id/mute` | `{ muted }` | Per-user |
+| PATCH | `/chats/:id/pin` | `{ pinned }` | Per-user; pinned chats sort first |
+| POST | `/chats/:id/lock` | `{ locked, password? }` | Locking is instant; removing the lock requires the password |
+| POST | `/chats/:id/unlock` | `{ password }` | Returns `{ unlockToken }`, valid 30 minutes |
+
+A locked chat answers **423 `chat_locked`** to `GET /chats/:id/messages`,
+`GET /chats/:id/search` and `POST /chats/:id/messages` until the caller sends
+`X-Chat-Unlock: <unlockToken>`. Locking is per member, so it never affects
+anyone else in the conversation.
 
 ## Messages
 

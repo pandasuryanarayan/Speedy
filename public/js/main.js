@@ -5,7 +5,7 @@ import { createAuthView } from './ui/auth.js';
 import { createSidebar } from './ui/sidebar.js';
 import { createChatPane } from './ui/chat.js';
 import { createInfoPanel } from './ui/info.js';
-import { profileModal, peoplePicker, promptDialog, confirmDialog, groupInfoModal, anyModalOpen } from './ui/modals.js';
+import { profileModal, peoplePicker, promptDialog, confirmDialog, groupInfoModal, anyModalOpen, unlockModal } from './ui/modals.js';
 import { toast, toastError } from './ui/toast.js';
 import { connectSocket, emitAsync } from './socket.js';
 
@@ -96,6 +96,8 @@ function buildShell() {
       if (state.activeChatId === chatId) closeChat();
       refreshChats();
     },
+    onPin: togglePin,
+    onLock: toggleLock,
     onManage: () => {
       if (state.chat?.type === 'group') {
         groupInfoModal({
@@ -147,12 +149,29 @@ async function refreshChats() {
 
 const refreshChatsSoon = debounce(refreshChats, 250);
 
+const chatHeaders = (chatId) => {
+  const token = state.unlocks.get(chatId);
+  return token ? { 'X-Chat-Unlock': token } : {};
+};
+
+/** A locked chat needs the account password before anything is fetched. */
+async function ensureUnlocked(chat) {
+  if (!chat.locked || state.unlocks.has(chat.id)) return true;
+  return unlockModal({
+    title: chat.title,
+    onSubmit: async (password) => {
+      const res = await api.post(`/api/chats/${chat.id}/unlock`, { password });
+      if (res.unlockToken) state.unlocks.set(chat.id, res.unlockToken);
+    },
+  });
+}
+
 async function openChat(chatId, { keepScroll = false } = {}) {
   try {
-    const [detail, page] = await Promise.all([
-      api.get(`/api/chats/${chatId}`),
-      api.get(`/api/chats/${chatId}/messages?limit=40`),
-    ]);
+    const detail = await api.get(`/api/chats/${chatId}`);
+    if (!(await ensureUnlocked(detail.chat))) return;
+
+    const page = await api.get(`/api/chats/${chatId}/messages?limit=40`, { headers: chatHeaders(chatId) });
     setState({
       activeChatId: chatId,
       chat: detail.chat,
@@ -184,7 +203,9 @@ async function loadOlder() {
   if (!state.cursor || state.loadingMessages) return;
   setState({ loadingMessages: true });
   try {
-    const page = await api.get(`/api/chats/${state.activeChatId}/messages?before=${state.cursor}&limit=40`);
+    const page = await api.get(`/api/chats/${state.activeChatId}/messages?before=${state.cursor}&limit=40`, {
+      headers: chatHeaders(state.activeChatId),
+    });
     const existing = new Set(state.messages.map((m) => m.id));
     setState({
       messages: [...page.messages.filter((m) => !existing.has(m.id)), ...state.messages],
@@ -219,6 +240,7 @@ async function sendMessage({ text, attachment }) {
     body: text || undefined,
     attachmentId: attachment?.id,
     replyToId: replyTo?.id,
+    unlock: state.unlocks.get(chatId),
   };
 
   const optimistic = {
@@ -245,7 +267,7 @@ async function sendMessage({ text, attachment }) {
   let result = await emitAsync('message:send', payload);
   if (!result.ok && result.error?.code === 'offline') {
     try {
-      const data = await api.post(`/api/chats/${chatId}/messages`, payload);
+      const data = await api.post(`/api/chats/${chatId}/messages`, payload, { headers: chatHeaders(chatId) });
       result = { ok: true, message: data.message };
     } catch (err) {
       result = { ok: false, error: { message: err.message } };
@@ -355,6 +377,48 @@ async function newGroup() {
     const data = await api.post('/api/chats/group', { title, memberIds: ids });
     await refreshChats();
     await openChat(data.chat.id);
+  } catch (err) {
+    toastError(err);
+  }
+}
+
+async function togglePin(chat) {
+  try {
+    await api.patch(`/api/chats/${chat.id}/pin`, { pinned: !chat.pinned });
+    await refreshChats();
+    const detail = await api.get(`/api/chats/${chat.id}`);
+    setState({ chat: detail.chat });
+    toast(chat.pinned ? 'Chat unpinned' : 'Chat pinned to top');
+  } catch (err) {
+    toastError(err);
+  }
+}
+
+async function toggleLock(chat) {
+  try {
+    if (!chat.locked) {
+      await api.post(`/api/chats/${chat.id}/lock`, { locked: true });
+      state.unlocks.delete(chat.id);
+      setState({ panelOpen: false });
+      closeChat();
+      await refreshChats();
+      toast('Chat locked');
+      return;
+    }
+
+    const removed = await unlockModal({
+      title: chat.title,
+      message: `Remove the lock from “${chat.title}”? Enter your account password to confirm.`,
+      onSubmit: async (password) => {
+        await api.post(`/api/chats/${chat.id}/lock`, { locked: false, password });
+      },
+    });
+    if (!removed) return;
+    state.unlocks.delete(chat.id);
+    toast('Lock removed');
+    await refreshChats();
+    const detail = await api.get(`/api/chats/${chat.id}`);
+    setState({ chat: detail.chat });
   } catch (err) {
     toastError(err);
   }

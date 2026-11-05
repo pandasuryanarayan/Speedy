@@ -18,6 +18,7 @@ export const state = {
   replyTo: null,
   pendingAttachment: null,
   socketReady: false,
+  unlocks: new Map(), // chatId -> short-lived unlock token
   unreadTotal: 0,
 };
 

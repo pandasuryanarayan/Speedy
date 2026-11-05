@@ -41,7 +41,11 @@ export function createSidebar({ onSelectChat, onNewChat, onNewGroup, onProfile, 
 
   function chatItem(chat, isActive) {
     const typing = chat.id === activeChat()?.id ? chat._typing : null;
-    const preview = typing ? 'typing…' : chat.lastMessage?.preview || 'No messages yet';
+    const preview = chat.locked
+      ? 'Locked chat — password required'
+      : typing
+        ? 'typing…'
+        : chat.lastMessage?.preview || 'No messages yet';
     const sender = !typing && chat.lastMessage && chat.type === 'group' ? `${chat.lastMessage.senderName}: ` : '';
     const avatar = chat.type === 'group'
       ? h('div', { class: 'avatar', dataset: { hue: hueFor(chat.id) }, text: initials(chat.title) })
@@ -62,6 +66,8 @@ export function createSidebar({ onSelectChat, onNewChat, onNewGroup, onProfile, 
           'span',
           { class: 'chat-item-top' },
           h('span', { class: 'chat-item-name', text: chat.title }),
+          chat.pinned ? h('span', { class: 'chat-flag', title: 'Pinned', html: icon('pin') }) : null,
+          chat.locked ? h('span', { class: 'chat-flag', title: 'Locked', html: icon('lock') }) : null,
           h('span', { class: 'chat-item-time', text: chat.lastMessage ? fmtListTime(chat.lastMessage.createdAt) : '' }),
         ),
         h(
