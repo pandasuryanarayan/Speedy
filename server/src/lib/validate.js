@@ -33,11 +33,30 @@ export const schemas = {
     username,
     displayName: z.string().trim().min(1, 'Tell us your name').max(48),
     password,
+    email: z.string().trim().email('That does not look like an email address').max(160).optional(),
   }),
   login: z.object({
     username: z.string().trim().min(1).max(64).transform((v) => v.toLowerCase()),
     password: z.string().min(1).max(128),
   }),
+  mfaVerify: z.object({
+    mfaToken: z.string().min(10).max(2048),
+    code: z.string().trim().min(6).max(16),
+  }),
+  mfaCode: z.object({ code: z.string().trim().min(6).max(16) }),
+  mfaDisable: z.object({ password: z.string().min(1).max(128) }),
+  verifyEmail: z.object({ token: z.string().min(10).max(200) }),
+  identifier: z.object({ identifier: z.string().trim().min(1).max(160) }),
+  resetPassword: z.object({ token: z.string().min(10).max(200), password }),
+  setEmail: z.object({ email: z.string().trim().email().max(160).nullable() }),
+
+  createReport: z.object({
+    messageId: z.string().uuid(),
+    reason: z.enum(['spam', 'abuse', 'harassment', 'illegal', 'other']),
+    details: z.string().trim().max(1000).optional(),
+  }),
+  resolveReport: z.object({ action: z.enum(['dismiss', 'remove-message', 'disable-user']) }),
+
   updateProfile: z
     .object({
       displayName: z.string().trim().min(1).max(48).optional(),

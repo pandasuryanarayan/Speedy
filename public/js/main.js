@@ -5,7 +5,10 @@ import { createAuthView } from './ui/auth.js';
 import { createSidebar } from './ui/sidebar.js';
 import { createChatPane } from './ui/chat.js';
 import { createInfoPanel } from './ui/info.js';
-import { profileModal, peoplePicker, promptDialog, confirmDialog, groupInfoModal, anyModalOpen, unlockModal } from './ui/modals.js';
+import {
+  profileModal, peoplePicker, promptDialog, confirmDialog, groupInfoModal,
+  anyModalOpen, unlockModal, securityModal, adminModal, reportModal,
+} from './ui/modals.js';
 import { toast, toastError } from './ui/toast.js';
 import { connectSocket, emitAsync } from './socket.js';
 
@@ -81,6 +84,7 @@ function buildShell() {
     onUnblock: () => {
       if (state.chat) unblockPeer(state.chat);
     },
+    onReport: reportMessage,
     onCancelAttachment: () => setState({ pendingAttachment: null }),
     onNewChat: newChat,
     onNotify: (message, type) => toast(message, { type }),
@@ -444,6 +448,52 @@ async function toggleLock(chat) {
   }
 }
 
+async function reportMessage(message) {
+  const choice = await reportModal({ message });
+  if (!choice) return;
+  try {
+    await api.post('/api/reports', { messageId: message.id, reason: choice.reason });
+    toast('Report sent to the moderators');
+  } catch (err) {
+    toastError(err);
+  }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+async function enableNotifications() {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      toast('This browser does not support notifications', { type: 'error' });
+      return;
+    }
+    const { enabled, publicKey } = await api.get('/api/push/key');
+    if (!enabled) {
+      toast('Push notifications are not configured on this server', { type: 'error' });
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      toast('Notifications were blocked in the browser', { type: 'error' });
+      return;
+    }
+    const registration = await navigator.serviceWorker.register('/sw.js');
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey),
+    });
+    await api.post('/api/push/subscribe', { subscription: subscription.toJSON() });
+    toast('Notifications enabled');
+  } catch (err) {
+    toastError(err);
+  }
+}
+
 function openProfile() {
   profileModal({
     state,
@@ -452,6 +502,18 @@ function openProfile() {
       refreshChatsSoon();
     },
     onLogout: logout,
+    onSecurity: () => {
+      document.querySelector('.modal-backdrop')?.remove();
+      securityModal({ state, onChanged: () => api.get('/api/auth/me').then((d) => setState({ user: d.user })).catch(() => {}) });
+    },
+    onNotifications: () => {
+      document.querySelector('.modal-backdrop')?.remove();
+      enableNotifications();
+    },
+    onAdmin: () => {
+      document.querySelector('.modal-backdrop')?.remove();
+      adminModal({ state });
+    },
   });
 }
 

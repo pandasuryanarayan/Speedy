@@ -135,4 +135,50 @@ export const MIGRATIONS = [
   UPDATE sessions SET family_started_at = created_at WHERE family_started_at IS NULL;
   ALTER TABLE attachments ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0;
   `,
+  // 4 - email identity, MFA, moderation, push subscriptions
+  `
+  ALTER TABLE users ADD COLUMN email TEXT;
+  ALTER TABLE users ADD COLUMN email_lower TEXT;
+  ALTER TABLE users ADD COLUMN email_verified_at INTEGER;
+  ALTER TABLE users ADD COLUMN totp_secret TEXT;
+  ALTER TABLE users ADD COLUMN totp_enabled_at INTEGER;
+  ALTER TABLE users ADD COLUMN backup_codes TEXT;
+  CREATE UNIQUE INDEX idx_users_email ON users(email_lower) WHERE email_lower IS NOT NULL;
+
+  CREATE TABLE email_tokens (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL CHECK (kind IN ('verify', 'reset')),
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at INTEGER NOT NULL,
+    used_at    INTEGER,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_email_tokens_user ON email_tokens(user_id);
+
+  CREATE TABLE reports (
+    id           TEXT PRIMARY KEY,
+    reporter_id  TEXT REFERENCES users(id) ON DELETE SET NULL,
+    chat_id      TEXT REFERENCES chats(id) ON DELETE SET NULL,
+    message_id   TEXT REFERENCES messages(id) ON DELETE SET NULL,
+    reason       TEXT NOT NULL,
+    details      TEXT,
+    status       TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'dismissed')),
+    resolution   TEXT,
+    resolved_by  TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at   INTEGER NOT NULL,
+    resolved_at  INTEGER
+  );
+  CREATE INDEX idx_reports_status ON reports(status, created_at DESC);
+
+  CREATE TABLE push_subscriptions (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    endpoint   TEXT NOT NULL UNIQUE,
+    p256dh     TEXT NOT NULL,
+    auth       TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_push_user ON push_subscriptions(user_id);
+  `,
 ];

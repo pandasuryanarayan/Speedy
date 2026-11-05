@@ -290,7 +290,7 @@ export function lightbox(src) {
 
 /* ------------------------------ profile ------------------------------ */
 
-export function profileModal({ state, onUpdated, onLogout }) {
+export function profileModal({ state, onUpdated, onLogout, onNotifications, onSecurity, onAdmin }) {
   const nameInput = h('input', { class: 'input', value: state.user.displayName, maxlength: '48' });
   const aboutInput = h('input', {
     class: 'input',
@@ -363,6 +363,59 @@ export function profileModal({ state, onUpdated, onLogout }) {
         { class: 'info-section' },
         h('h5', { text: 'Security' }),
         h(
+          'div',
+          { class: 'info-row' },
+          h('span', { class: 'grow' },
+            h('span', { class: 'name', text: 'Email' }),
+            h('span', { class: 'sub', text: state.user.email ? `${state.user.email}${state.user.emailVerified ? ' · verified' : ' · unverified'}` : 'Not set — needed for password reset' }),
+          ),
+          h('button', {
+            class: 'btn btn-sm',
+            text: state.user.email ? 'Change' : 'Add',
+            onclick: async () => {
+              const email = await promptDialog({ title: 'Email address', label: 'We use it only for verification and password reset', value: state.user.email || '', placeholder: 'you@example.com', confirmText: 'Save', maxLength: 160 });
+              if (!email) return;
+              try {
+                const data = await api.patch('/api/auth/email', { email });
+                state.user = { ...state.user, ...data.user };
+                onUpdated?.(data.user);
+                toast('Email saved — check your inbox to confirm');
+                ref.close();
+                profileModal({ state, onUpdated, onLogout, onNotifications, onSecurity, onAdmin });
+              } catch (err) { toastError(err); }
+            },
+          }),
+        ),
+        h(
+          'div',
+          { class: 'info-row' },
+          h('span', { class: 'grow' },
+            h('span', { class: 'name', text: 'Two-factor authentication' }),
+            h('span', { class: 'sub', text: state.user.mfaEnabled ? 'Enabled' : 'Add a second step at sign-in' }),
+          ),
+          h('button', { class: 'btn btn-sm', text: state.user.mfaEnabled ? 'Manage' : 'Enable', onclick: () => onSecurity?.() }),
+        ),
+        h(
+          'div',
+          { class: 'info-row' },
+          h('span', { class: 'grow' },
+            h('span', { class: 'name', text: 'Notifications' }),
+            h('span', { class: 'sub', text: 'Browser alerts when you are away' }),
+          ),
+          h('button', { class: 'btn btn-sm', text: 'Enable', onclick: () => onNotifications?.() }),
+        ),
+        state.user.role === 'admin'
+          ? h(
+              'div',
+              { class: 'info-row' },
+              h('span', { class: 'grow' },
+                h('span', { class: 'name', text: 'Moderation' }),
+                h('span', { class: 'sub', text: 'Reports and account controls' }),
+              ),
+              h('button', { class: 'btn btn-sm', text: 'Open', onclick: () => onAdmin?.() }),
+            )
+          : null,
+        h(
           'button',
           {
             class: 'btn btn-sm',
@@ -421,6 +474,187 @@ export function profileModal({ state, onUpdated, onLogout }) {
       h('button', { class: 'btn btn-ghost', text: 'Sign out', onclick: onLogout }),
       h('button', { class: 'btn btn-primary', text: 'Save changes', onclick: save }),
     ],
+  });
+}
+
+/** TOTP enrolment: secret, otpauth URI, confirmation code, backup codes. */
+export function securityModal({ state, onChanged }) {
+  const body = h('div', { class: 'modal-lead muted', text: 'Loading…' });
+  const ref = openModal({
+    title: 'Two-factor authentication',
+    body,
+    footer: [h('button', { class: 'btn btn-primary', text: 'Done', onclick: () => ref.close() })],
+  });
+
+  const renderState = async () => {
+    try {
+      const data = await api.get('/api/auth/mfa');
+      const { mfa } = data;
+      if (mfa.policy === 'off') {
+        body.replaceChildren(h('p', { class: 'muted', text: 'Two-factor authentication is disabled on this instance.' }));
+        return;
+      }
+      if (mfa.enabled) {
+        const password = h('input', { class: 'input', type: 'password', placeholder: 'Account password' });
+        const error = h('span', { class: 'field-error' });
+        body.replaceChildren(
+          h('p', { class: 'modal-lead muted', text: `Two-factor authentication is on. ${mfa.backupCodesRemaining} backup codes left.` }),
+          h('label', { class: 'field' }, h('span', { text: 'Confirm with your password to turn it off' }), password),
+          error,
+          h('button', {
+            class: 'btn btn-danger',
+            text: 'Turn off two-factor',
+            onclick: async () => {
+              try {
+                await api.post('/api/auth/mfa/disable', { password: password.value });
+                toast('Two-factor disabled');
+                onChanged?.();
+                renderState();
+              } catch (err) {
+                error.textContent = err.message;
+              }
+            },
+          }),
+        );
+        return;
+      }
+
+      const start = await api.post('/api/auth/mfa/setup', {});
+      const code = h('input', { class: 'input', placeholder: '123456', inputmode: 'numeric', maxlength: '6' });
+      const error = h('span', { class: 'field-error' });
+      const codes = h('div');
+      body.replaceChildren(
+        h('p', { class: 'modal-lead muted', text: 'Add this secret to your authenticator app, then enter the 6-digit code it shows.' }),
+        h('code', { class: 'secret-box', text: start.secret }),
+        h('p', { class: 'muted small', text: start.uri }),
+        h('label', { class: 'field' }, h('span', { text: 'Verification code' }), code),
+        error,
+        h('button', {
+          class: 'btn btn-primary',
+          text: 'Enable two-factor',
+          onclick: async () => {
+            try {
+              const result = await api.post('/api/auth/mfa/enable', { code: code.value.trim() });
+              codes.replaceChildren(
+                h('h5', { class: 'muted', text: 'Save these backup codes — each works once' }),
+                h('div', { class: 'backup-codes' }, ...result.backupCodes.map((c) => h('code', { text: c }))),
+              );
+              toast('Two-factor enabled');
+              onChanged?.();
+            } catch (err) {
+              error.textContent = err.message;
+            }
+          },
+        }),
+        codes,
+      );
+    } catch (err) {
+      body.replaceChildren(h('p', { class: 'muted', text: err.message }));
+    }
+  };
+
+  renderState();
+  return ref;
+}
+
+/** Moderation queue for administrators. */
+export function adminModal({ state }) {
+  const list = h('div', { class: 'modal-list' }, h('p', { class: 'muted', text: 'Loading…' }));
+  const stats = h('div', { class: 'admin-stats' });
+  const ref = openModal({
+    title: 'Moderation',
+    wide: true,
+    body: [stats, list],
+    footer: [h('button', { class: 'btn btn-primary', text: 'Close', onclick: () => ref.close() })],
+  });
+
+  const load = async () => {
+    try {
+      const [overview, reports] = await Promise.all([api.get('/api/admin/overview'), api.get('/api/admin/reports?status=open')]);
+      stats.replaceChildren(
+        ...[
+          ['Open reports', overview.openReports],
+          ['Users', overview.users],
+          ['Messages', overview.messages],
+        ].map(([label, value]) =>
+          h('div', { class: 'admin-stat' }, h('span', { class: 'value', text: String(value) }), h('span', { class: 'label', text: label })),
+        ),
+      );
+
+      if (!reports.reports.length) {
+        list.replaceChildren(h('p', { class: 'muted empty-list', text: 'No open reports. Nothing to moderate.' }));
+        return;
+      }
+
+      list.replaceChildren(
+        ...reports.reports.map((report) =>
+          h(
+            'div',
+            { class: 'report-card' },
+            h('div', { class: 'report-head' },
+              h('span', { class: 'role-tag', text: report.reason }),
+              h('span', { class: 'muted small', text: `@${report.reporter || 'unknown'} · ${new Date(report.createdAt).toLocaleString()}` }),
+            ),
+            h('p', { class: 'report-body', text: report.messagePreview || '(no text)' }),
+            h('div', { class: 'report-actions' },
+              h('button', { class: 'btn btn-sm', text: 'Dismiss', onclick: () => resolve(report.id, 'dismiss') }),
+              h('button', { class: 'btn btn-sm', text: 'Delete message', onclick: () => resolve(report.id, 'remove-message') }),
+              h('button', { class: 'btn btn-sm btn-danger', text: 'Disable author', onclick: () => resolve(report.id, 'disable-user') }),
+            ),
+          ),
+        ),
+      );
+    } catch (err) {
+      list.replaceChildren(h('p', { class: 'muted', text: err.message }));
+    }
+  };
+
+  const resolve = async (id, action) => {
+    try {
+      await api.post(`/api/admin/reports/${id}/resolve`, { action });
+      toast('Report resolved');
+      load();
+    } catch (err) {
+      toastError(err);
+    }
+  };
+
+  load();
+  return ref;
+}
+
+/** Report a message to the moderation queue. */
+export function reportModal({ message }) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      ref.close();
+      resolve(value);
+    };
+    const reasons = [
+      ['spam', 'Spam or scam'],
+      ['abuse', 'Abusive content'],
+      ['harassment', 'Harassment'],
+      ['illegal', 'Illegal content'],
+      ['other', 'Something else'],
+    ];
+    const ref = openModal({
+      title: 'Report message',
+      body: [
+        h('p', { class: 'modal-lead muted', text: 'Reports go to the moderators of this instance. The message author is not told.' }),
+        h(
+          'div',
+          { class: 'report-reasons' },
+          ...reasons.map(([value, label]) =>
+            h('button', { class: 'btn btn-block', text: label, onclick: () => finish({ reason: value, message }) }),
+          ),
+        ),
+      ],
+      footer: [h('button', { class: 'btn btn-ghost', text: 'Cancel', onclick: () => finish(null) })],
+      onClose: () => finish(null),
+    });
   });
 }
 

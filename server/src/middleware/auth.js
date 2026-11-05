@@ -1,6 +1,6 @@
 import config from '../config.js';
 import { get, run } from '../db/index.js';
-import { forbidden, unauthorized } from '../lib/errors.js';
+import { AppError, forbidden, unauthorized } from '../lib/errors.js';
 import { verifyAccessToken } from '../lib/tokens.js';
 import { toUserDTO } from '../lib/dto.js';
 
@@ -88,3 +88,11 @@ export async function requireAuth(req, res, next) {
 }
 
 export const optionalAuth = (req, res, next) => (bearerToken(req) ? requireAuth(req, res, next) : next());
+
+/** Admin-only routes. Roles are assigned from ADMIN_USERNAMES at boot. */
+export function requireAdmin(req, res, next) {
+  if (req.user?.role !== 'admin') {
+    return next(new AppError(403, 'forbidden', 'Administrator access required'));
+  }
+  next();
+}

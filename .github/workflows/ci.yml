@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Tests
+        run: npm test
+        env:
+          NODE_ENV: test
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+        continue-on-error: true
+      - name: Check for committed secrets
+        run: |
+          if git grep -nE '(JWT_SECRET|MESSAGE_KEY)=[A-Za-z0-9+/]{20,}' -- ':!*.md' ':!.env.example'; then
+            echo "::error::A secret looks committed"; exit 1
+          fi

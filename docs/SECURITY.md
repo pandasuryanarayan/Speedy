@@ -35,6 +35,28 @@ layer (put a CDN/WAF in front).
 - After 5 failures the account is locked for 15 minutes; the counter is per account, not per IP, so
   rotating IPs does not help an attacker.
 - Usernames are normalised to lowercase and checked against a reserved list (`admin`, `root`, ...).
+- **Breached passwords**: registration and reset check the password against Have I Been Pwned using
+  k-anonymity — only the first five characters of a SHA-1 hash leave the server, never the password or
+  the full hash. The check fails open (with a warning) so an outage at HIBP cannot block sign-ups.
+
+### Two-factor authentication
+
+- RFC 6238 TOTP: SHA-1, 6 digits, 30-second step, ±1 step accepted for clock drift. Implemented in
+  `lib/totp.js` rather than pulled from a dependency, so the algorithm is auditable in 60 lines.
+- Enrolment requires a valid code before the secret is activated, so a mis-scanned QR cannot lock
+  anyone out. Ten backup codes are generated once, stored as SHA-256 hashes, and consumed on use.
+- **A correct password alone never produces a session** once 2FA is on: the login endpoint returns a
+  5-minute challenge token (separate audience, `purpose: mfa`) and the session is only minted after a
+  valid code. Wrong codes count toward the same lockout as wrong passwords.
+- Policy is operator-controlled (`MFA_POLICY` = off / optional / required).
+
+### Email and password reset
+
+- Verification and reset links are 256-bit random tokens, stored only as SHA-256 hashes, single use,
+  expiring in 24 hours and 1 hour respectively.
+- `POST /auth/forgot-password` always answers `200` whether or not the account exists, and only sends
+  mail when there is an address on file — no account enumeration.
+- Completing a reset revokes every existing session for that user and clears the lockout counter.
 
 ### Sessions
 
@@ -87,6 +109,13 @@ All of these are exercised by `server/tests/api.test.js`.
   `server/src`.
 - Uploaded filenames are stripped of directory components, control characters and Windows-reserved
   characters, truncated to 120 characters, and never used as the on-disk name.
+
+### Malware scanning
+
+When `CLAMAV_HOST` is set, every upload is streamed to clamd over `INSTREAM` **before** it is written
+to disk. An infected file is rejected with `400` and a `security.malware_detected` audit event (which
+also fires the alert webhook). Images are additionally decoded and re-encoded regardless of the
+scanner, which neutralises polyglot payloads.
 
 ### Outbound requests (SSRF)
 
@@ -173,9 +202,27 @@ global.
 `auth.login_disabled`, `auth.refresh_reuse`, `auth.logout`, `auth.logout_all`,
 `auth.session_revoked`, `auth.session_idle_timeout`, `auth.session_absolute_timeout`,
 `user.blocked`, `chat.group_created`, `chat.members_added`, `chat.member_removed`, `chat.locked`,
-`chat.unlocked`, `chat.unlocked_permanently`, `account.deleted` — with user id, IP, user agent,
+`chat.unlocked`, `chat.unlocked_permanently`, `auth.mfa_enabled`, `auth.mfa_disabled`,
+`auth.mfa_challenge`, `auth.mfa_backup_code_used`, `auth.email_verified`, `auth.password_reset`,
+`moderation.reported`, `moderation.message_removed`, `moderation.user_disabled`,
+`admin.user_disabled`, `security.malware_detected`, `account.deleted` — with user id, IP, user agent,
 timestamp and small JSON metadata. Ship it to
 your SIEM with `SELECT * FROM audit_log WHERE created_at > ?`.
+
+## Alerting
+
+`ALERT_WEBHOOK_URL` receives a Slack-compatible JSON payload for the events that deserve a human:
+refresh-token replay, account lockout, session idle/absolute expiry, malware detection, account
+deletion and moderation actions. Delivery is fire-and-forget with a 4-second timeout so a slow webhook
+never blocks a request.
+
+## Moderation
+
+Any member can report a message they can see (`POST /api/reports`). Administrators — promoted from
+`ADMIN_USERNAMES` at boot — get a queue with three outcomes: dismiss, delete the message for
+everyone, or disable the author (which also revokes their sessions). Every action is audited, and the
+author is never told who reported them. Admins cannot disable other admins through the UI, so a single
+compromised admin cannot lock the others out.
 
 ## Backups and restore
 

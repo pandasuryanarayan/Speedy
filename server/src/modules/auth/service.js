@@ -1,11 +1,15 @@
 import config from '../../config.js';
 import { get, run, all } from '../../db/index.js';
 import { audit } from '../../lib/audit.js';
-import { AppError, conflict, forbidden, notFound, unauthorized } from '../../lib/errors.js';
+import { AppError, conflict, forbidden, notFound, unauthorized, unprocessable } from '../../lib/errors.js';
 import { newId } from '../../lib/ids.js';
 import { fakeVerify, hashPassword, verifyPassword } from '../../lib/password.js';
 import { createRefreshToken, hashRefreshToken, signAccessToken } from '../../lib/tokens.js';
 import { toUserDTO } from '../../lib/dto.js';
+import { breachedPasswordCount } from '../../lib/pwned.js';
+import { signMfaToken } from '../../lib/tokens.js';
+import { consumeEmailToken, createEmailToken, sendPasswordResetEmail, sendVerificationEmail } from './email-tokens.js';
+import { verifyLogin as verifyMfaLogin } from './mfa.js';
 
 const RESERVED_USERNAMES = new Set([
   'admin', 'administrator', 'root', 'support', 'speedy', 'system', 'help', 'api', 'security', 'moderator', 'staff',
@@ -51,25 +55,63 @@ async function issueTokens(user, session, { ip, userAgent } = {}) {
   };
 }
 
-export async function register({ username, displayName, password }, ctx = {}) {
+export async function register({ username, displayName, password, email }, ctx = {}) {
+  if (!config.auth.allowRegistration) {
+    throw forbidden('Registration is closed on this instance. Ask an administrator for an account.');
+  }
   assertUsernameAllowed(username);
 
   const existing = await get('SELECT id FROM users WHERE username_lower = ?', [username]);
   if (existing) throw conflict('That username is already taken');
 
+  const normalisedEmail = email ? String(email).trim().toLowerCase() : null;
+  if (normalisedEmail) {
+    const taken = await get('SELECT id FROM users WHERE email_lower = ?', [normalisedEmail]);
+    if (taken) throw conflict('That email is already registered');
+  }
+
+  // Refuse passwords that are already in a public breach corpus.
+  if (config.security.hibpEnabled) {
+    const seen = await breachedPasswordCount(password);
+    if (seen > 0) {
+      throw unprocessable('That password has appeared in a data breach. Please choose a different one.');
+    }
+  }
+
   const now = Date.now();
   const id = newId();
   const passwordHash = await hashPassword(password);
+  const needsVerification = Boolean(normalisedEmail) && config.auth.requireEmailVerification;
 
   await run(
-    `INSERT INTO users (id, username, username_lower, display_name, about, password_hash, role, created_at, updated_at, last_seen_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'user', ?, ?, ?)`,
-    [id, username, username, displayName, '', passwordHash, now, now, now],
+    `INSERT INTO users (id, username, username_lower, display_name, about, password_hash, role, email, email_lower, email_verified_at, created_at, updated_at, last_seen_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'user', ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      username,
+      username,
+      displayName,
+      '',
+      passwordHash,
+      normalisedEmail,
+      normalisedEmail,
+      needsVerification ? null : now,
+      now,
+      now,
+      now,
+    ],
   );
 
   const user = await get('SELECT * FROM users WHERE id = ?', [id]);
-  const session = await createSession(id, ctx);
   await audit('auth.register', { userId: id, req: ctx.req });
+
+  if (needsVerification) {
+    const token = await createEmailToken(id, 'verify');
+    await sendVerificationEmail(user, token);
+    return { verificationRequired: true, user: toUserDTO(user, { self: true, viewerId: id }) };
+  }
+
+  const session = await createSession(id, ctx);
   return issueTokens(user, session);
 }
 
@@ -105,7 +147,19 @@ export async function login({ username, password }, ctx = {}) {
     throw unauthorized('Incorrect username or password');
   }
 
+  if (config.auth.requireEmailVerification && user.email && !user.email_verified_at) {
+    await audit('auth.login_unverified', { userId: user.id, req: ctx.req });
+    throw new AppError(403, 'email_unverified', 'Confirm your email address before signing in');
+  }
+
   await run('UPDATE users SET failed_attempts = 0, locked_until = NULL, last_seen_at = ? WHERE id = ?', [Date.now(), user.id]);
+
+  // Password is correct, but a second factor is required before a session exists.
+  if (user.totp_enabled_at) {
+    await audit('auth.mfa_challenge', { userId: user.id, req: ctx.req });
+    return { mfaRequired: true, mfaToken: await signMfaToken(user.id) };
+  }
+
   const session = await createSession(user.id, ctx);
   await audit('auth.login', { userId: user.id, req: ctx.req });
   return issueTokens(user, session);
@@ -201,4 +255,106 @@ export async function revokeSession(userId, sessionId, ctx = {}) {
   if (!row) throw notFound('Session not found');
   await run('UPDATE sessions SET revoked_at = ? WHERE id = ?', [Date.now(), sessionId]);
   await audit('auth.session_revoked', { userId, req: ctx.req, meta: { sessionId } });
+}
+
+
+/* ------------------------------ second factor ------------------------------ */
+
+export async function completeMfaLogin(userId, code, ctx = {}) {
+  const user = await get('SELECT * FROM users WHERE id = ?', [userId]);
+  if (!user || !user.totp_enabled_at) throw unauthorized('Two-factor authentication is not enabled');
+
+  try {
+    await verifyMfaLogin(user, code);
+  } catch (err) {
+    await noteFailedAttempt(user);
+    throw unauthorized('That code is not valid');
+  }
+
+  await run('UPDATE users SET failed_attempts = 0, locked_until = NULL, last_seen_at = ? WHERE id = ?', [Date.now(), user.id]);
+  const session = await createSession(user.id, ctx);
+  await audit('auth.login', { userId: user.id, req: ctx.req, meta: { mfa: true } });
+  return issueTokens(user, session);
+}
+
+async function noteFailedAttempt(user) {
+  const attempts = Number(user.failed_attempts) + 1;
+  const lock = attempts >= config.maxLoginAttempts ? Date.now() + config.lockoutMs : null;
+  await run('UPDATE users SET failed_attempts = ?, locked_until = ? WHERE id = ?', [lock ? 0 : attempts, lock, user.id]);
+}
+
+/* --------------------------- email verification --------------------------- */
+
+export async function verifyEmail(token, ctx = {}) {
+  const userId = await consumeEmailToken(token, 'verify');
+  if (!userId) throw unauthorized('That confirmation link is invalid or has expired');
+  await run('UPDATE users SET email_verified_at = ?, updated_at = ? WHERE id = ?', [Date.now(), Date.now(), userId]);
+  await audit('auth.email_verified', { userId, req: ctx.req });
+  return { verified: true };
+}
+
+export async function resendVerification(identifier, ctx = {}) {
+  const user = await get('SELECT * FROM users WHERE username_lower = ? OR email_lower = ?', [identifier, identifier]);
+  // Always behave the same, verified or not, existing or not.
+  if (user && user.email && !user.email_verified_at) {
+    const token = await createEmailToken(user.id, 'verify');
+    await sendVerificationEmail(user, token);
+    await audit('auth.verification_resent', { userId: user.id, req: ctx.req });
+  }
+  return { sent: true };
+}
+
+/* ------------------------------ password reset ----------------------------- */
+
+export async function requestPasswordReset(identifier, ctx = {}) {
+  const user = await get('SELECT * FROM users WHERE username_lower = ? OR email_lower = ?', [identifier, identifier]);
+  if (user && user.email) {
+    const token = await createEmailToken(user.id, 'reset');
+    await sendPasswordResetEmail(user, token);
+    await audit('auth.password_reset_requested', { userId: user.id, req: ctx.req });
+  }
+  // Same answer either way: no account enumeration.
+  return { sent: true };
+}
+
+export async function resetPassword(token, password, ctx = {}) {
+  const userId = await consumeEmailToken(token, 'reset');
+  if (!userId) throw unauthorized('That reset link is invalid or has expired');
+
+  if (config.security.hibpEnabled) {
+    const seen = await breachedPasswordCount(password);
+    if (seen > 0) throw unprocessable('That password has appeared in a data breach. Please choose a different one.');
+  }
+
+  await run('UPDATE users SET password_hash = ?, failed_attempts = 0, locked_until = NULL, updated_at = ? WHERE id = ?', [
+    await hashPassword(password),
+    Date.now(),
+    userId,
+  ]);
+  // A password reset invalidates every existing session.
+  await run('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL', [Date.now(), userId]);
+  await audit('auth.password_reset', { userId, req: ctx.req });
+  return { reset: true };
+}
+
+/* -------------------------------- profile bits ------------------------------- */
+
+export async function setEmail(userId, email) {
+  const normalised = email ? String(email).trim().toLowerCase() : null;
+  if (normalised) {
+    const taken = await get('SELECT id FROM users WHERE email_lower = ? AND id != ?', [normalised, userId]);
+    if (taken) throw conflict('That email is already registered');
+  }
+  await run('UPDATE users SET email = ?, email_lower = ?, email_verified_at = NULL, updated_at = ? WHERE id = ?', [
+    normalised,
+    normalised,
+    Date.now(),
+    userId,
+  ]);
+  const user = await get('SELECT * FROM users WHERE id = ?', [userId]);
+  if (normalised) {
+    const token = await createEmailToken(userId, 'verify');
+    await sendVerificationEmail(user, token);
+  }
+  return toUserDTO(user, { self: true, viewerId: userId });
 }

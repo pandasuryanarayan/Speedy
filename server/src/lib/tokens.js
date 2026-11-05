@@ -33,3 +33,25 @@ export function createRefreshToken() {
 }
 
 export const hashRefreshToken = (token) => sha256(token);
+
+/** 5-minute challenge issued after a correct password when MFA is enabled. */
+export async function signMfaToken(userId) {
+  return new SignJWT({ purpose: 'mfa' })
+    .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
+    .setSubject(userId)
+    .setIssuer(config.jwtIssuer)
+    .setAudience('speedy-mfa')
+    .setIssuedAt()
+    .setExpirationTime('300s')
+    .sign(secret);
+}
+
+export async function verifyMfaToken(token) {
+  const { payload } = await jwtVerify(token, secret, {
+    issuer: config.jwtIssuer,
+    audience: 'speedy-mfa',
+    algorithms: ['HS256'],
+  });
+  if (payload.purpose !== 'mfa' || !payload.sub) throw new Error('Invalid MFA token');
+  return payload.sub;
+}

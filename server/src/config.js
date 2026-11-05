@@ -98,6 +98,44 @@ export const config = Object.freeze({
   lockoutMs: 15 * 60 * 1000,
   scrypt: { N: 32768, r: 8, p: 1, keylen: 64, maxmem: 128 * 1024 * 1024 },
 
+  // ---- configurable auth policy -------------------------------------------
+  auth: Object.freeze({
+    allowRegistration: (process.env.ALLOW_REGISTRATION || 'true') !== 'false',
+    requireEmailVerification: (process.env.REQUIRE_EMAIL_VERIFICATION || 'false') === 'true',
+    mfaPolicy: ['off', 'optional', 'required'].includes(process.env.MFA_POLICY || '')
+      ? process.env.MFA_POLICY
+      : 'optional',
+    adminUsernames: (process.env.ADMIN_USERNAMES || '')
+      .split(',')
+      .map((v) => v.trim().toLowerCase())
+      .filter(Boolean),
+  }),
+
+  smtp: Object.freeze({
+    host: process.env.SMTP_HOST || '',
+    port: Number.parseInt(process.env.SMTP_PORT || '587', 10),
+    secure: process.env.SMTP_SECURE === 'true',
+    user: process.env.SMTP_USER || '',
+    pass: process.env.SMTP_PASS || '',
+    from: process.env.SMTP_FROM || 'Speedy <no-reply@localhost>',
+  }),
+
+  security: Object.freeze({
+    // Off by default under NODE_ENV=test so the suite never needs the network.
+    hibpEnabled: (process.env.HIBP_ENABLED || (nodeEnv === 'test' ? 'false' : 'true')) !== 'false',
+    clamavHost: process.env.CLAMAV_HOST || '',
+    clamavPort: Number.parseInt(process.env.CLAMAV_PORT || '3310', 10),
+    alertWebhook: process.env.ALERT_WEBHOOK_URL || '',
+  }),
+
+  redisUrl: process.env.REDIS_URL || '',
+
+  push: Object.freeze({
+    publicKey: process.env.VAPID_PUBLIC_KEY || '',
+    privateKey: process.env.VAPID_PRIVATE_KEY || '',
+    subject: process.env.VAPID_SUBJECT || 'mailto:admin@localhost',
+  }),
+
   cookieName: 'speedy_rt',
   csrfCookieName: 'speedy_csrf',
   cookiePath: '/api/auth',

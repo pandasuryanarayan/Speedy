@@ -541,6 +541,126 @@ ul { margin: 0; padding: 0; list-style: none; }
 .menu-emoji { display: flex; gap: 2px; padding: 4px; }
 .menu-emoji button { font-size: 19px; width: 34px; height: 34px; padding: 0; justify-content: center; border-radius: 9px; }
 
+
+/* ==========================================================================
+   Premium finish — depth, motion and detail on top of the base tokens
+   ========================================================================== */
+:root {
+  --shadow-sm: 0 1px 2px rgba(17, 19, 38, 0.05), 0 3px 10px rgba(17, 19, 38, 0.045);
+  --shadow-md: 0 10px 30px rgba(17, 19, 38, 0.09), 0 2px 8px rgba(17, 19, 38, 0.04);
+  --shadow-lg: 0 32px 70px rgba(22, 18, 60, 0.18);
+  --brand-grad: linear-gradient(135deg, #4f46e5 0%, #6366f1 48%, #8b5cf6 100%);
+}
+
+/* brand mark */
+.brand-mark {
+  width: 36px; height: 36px; border-radius: 11px; flex: none;
+  display: grid; place-items: center; color: #fff;
+  background: var(--brand-grad);
+  box-shadow: 0 6px 16px rgba(79, 70, 229, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+.brand-mark svg { width: 19px; height: 19px; }
+
+/* sidebar: calmer header, stronger active state */
+.sidebar-head { padding: 14px 12px 12px; gap: 6px; }
+.sidebar-head .me { border-radius: 12px; }
+.chat-item[aria-current='true'] {
+  background: linear-gradient(90deg, rgba(79, 70, 229, 0.12), rgba(139, 92, 246, 0.07));
+  box-shadow: inset 0 0 0 1px rgba(79, 70, 229, 0.12);
+}
+.chat-item[aria-current='true']::before { height: 26px; width: 3px; }
+.chat-item:hover { background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); }
+
+/* chat header: subtle depth instead of a hard line */
+.chat-head {
+  background: linear-gradient(180deg, #ffffff 0%, rgba(255, 255, 255, 0.92) 100%);
+  border-bottom: 1px solid rgba(230, 233, 242, 0.9);
+  box-shadow: 0 1px 0 rgba(17, 19, 38, 0.03), 0 6px 18px -12px rgba(17, 19, 38, 0.28);
+}
+.chat-head .avatar { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.08); }
+
+/* bubbles: softer, with a real gradient and a gentle lift */
+.bubble { border-color: rgba(230, 233, 242, 0.9); }
+.msg.out .bubble {
+  background: var(--brand-grad);
+  box-shadow: 0 4px 14px -4px rgba(79, 70, 229, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.msg:hover .bubble { transform: translateY(-1px); }
+.bubble { transition: box-shadow 0.15s var(--ease), transform 0.15s var(--ease); }
+
+/* composer: floating bar */
+.composer { border-top: 1px solid rgba(230, 233, 242, 0.9); background: linear-gradient(180deg, #fff, #fcfcff); }
+.composer-input { background: var(--surface-2); border-color: var(--border); }
+.composer-input:focus { box-shadow: 0 0 0 4px var(--brand-ring), 0 6px 18px -8px rgba(79, 70, 229, 0.4); }
+.send-btn { border-radius: 16px; }
+.send-btn:hover { transform: translateY(-1px); }
+
+/* buttons and icon buttons */
+.btn-primary { background: var(--brand-grad); }
+.btn-primary:hover { transform: translateY(-1px); }
+.icon-btn { border-radius: 10px; }
+.icon-btn:hover { background: rgba(79, 70, 229, 0.08); }
+.icon-btn:active { transform: scale(0.94); }
+
+/* empty state */
+.chat-empty .art {
+  background: linear-gradient(150deg, #eef0ff, #f6f1ff);
+  box-shadow: 0 18px 40px -18px rgba(79, 70, 229, 0.45), inset 0 1px 0 #fff;
+}
+.chat-empty h3 { letter-spacing: -0.4px; }
+
+/* auth: layered mesh instead of a flat gradient */
+.auth-brand {
+  background:
+    radial-gradient(900px 520px at 12% 8%, rgba(255, 255, 255, 0.28), transparent 60%),
+    radial-gradient(700px 520px at 88% 92%, rgba(255, 255, 255, 0.16), transparent 60%),
+    var(--brand-grad);
+}
+.auth-logo .mark { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 8px 24px rgba(20, 12, 70, 0.25); }
+.auth-panel { background: linear-gradient(180deg, #ffffff 0%, #fbfbff 100%); }
+.btn-primary.btn-block { height: 44px; border-radius: 12px; font-size: 14.5px; }
+
+/* modals */
+.modal { border-radius: 22px; box-shadow: var(--shadow-lg), 0 0 0 1px rgba(17, 19, 38, 0.04); }
+.modal-head h3 { letter-spacing: -0.3px; }
+.modal-backdrop { background: rgba(14, 16, 30, 0.5); }
+
+/* menus */
+.menu { border-radius: 16px; box-shadow: 0 20px 45px -18px rgba(17, 19, 38, 0.45); }
+
+
+/* ---------- security, moderation and push UI ---------- */
+.small { font-size: 12px; }
+.modal-body p, .modal-body code { overflow-wrap: anywhere; }
+.secret-box {
+  display: block; margin: 10px 0; padding: 12px 14px; border-radius: 11px;
+  background: var(--brand-tint); border: 1px dashed var(--border-strong);
+  font-family: var(--mono); font-size: 13px; letter-spacing: 0.08em; word-break: break-all;
+  color: var(--brand-strong); text-align: center;
+}
+.backup-codes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 14px; }
+.backup-codes code {
+  padding: 7px 9px; border-radius: 8px; background: var(--surface-2);
+  border: 1px solid var(--border); font-family: var(--mono); font-size: 12.5px; text-align: center;
+}
+.admin-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+.admin-stat {
+  display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-radius: 12px;
+  background: var(--brand-tint); border: 1px solid var(--border);
+}
+.admin-stat .value { font-size: 20px; font-weight: 700; letter-spacing: -0.4px; }
+.admin-stat .label { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); }
+.report-card {
+  padding: 12px 14px; border-radius: 13px; border: 1px solid var(--border);
+  background: var(--surface-2); margin-bottom: 10px;
+}
+.report-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.report-body { font-size: 13.5px; color: var(--text-soft); margin-bottom: 10px; overflow-wrap: anywhere; }
+.report-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.report-reasons { display: grid; gap: 6px; }
+.report-reasons .btn { justify-content: flex-start; background: var(--surface-2); }
+.report-reasons .btn:hover { background: var(--surface-3); }
+
 /* ==========================================================================
    Responsive
    ========================================================================== */

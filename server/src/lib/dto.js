@@ -26,6 +26,9 @@ export function toUserDTO(row, { self = false, viewerId = null } = {}) {
   if (self) {
     dto.role = row.role;
     dto.createdAt = row.created_at;
+    dto.email = row.email ?? null;
+    dto.emailVerified = Boolean(row.email_verified_at);
+    dto.mfaEnabled = Boolean(row.totp_enabled_at);
   }
   return dto;
 }

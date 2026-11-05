@@ -599,6 +599,148 @@ test('blocking a contact is reflected in the conversation and can be undone', as
   assert.equal(sendAgain.status, 201, 'messages work again');
 });
 
+test('two-factor authentication gates the session', async () => {
+  const { generateToken } = await import('../src/lib/totp.js');
+  const me = await newUser('mfa_user');
+
+  const setup = await me.api.call('/api/auth/mfa/setup', { method: 'POST', token: me.token });
+  assert.equal(setup.status, 200);
+  assert.match(setup.body.uri, /^otpauth:\/\/totp\//);
+
+  const wrong = await me.api.call('/api/auth/mfa/enable', { method: 'POST', token: me.token, body: { code: '000000' } });
+  assert.equal(wrong.status, 400, 'a wrong code does not enable 2FA');
+
+  const enabled = await me.api.call('/api/auth/mfa/enable', {
+    method: 'POST',
+    token: me.token,
+    body: { code: generateToken(setup.body.secret) },
+  });
+  assert.equal(enabled.status, 200);
+  assert.equal(enabled.body.backupCodes.length, 10);
+
+  // Password alone no longer yields a session.
+  const login = await client().call('/api/auth/login', {
+    method: 'POST',
+    body: { username: 'mfa_user', password: 'test-password-123' },
+  });
+  assert.equal(login.status, 200);
+  assert.equal(login.body.mfaRequired, true);
+  assert.ok(login.body.mfaToken);
+  assert.equal(login.body.accessToken, undefined, 'no session before the second factor');
+
+  const badCode = await client().call('/api/auth/mfa/verify', {
+    method: 'POST',
+    body: { mfaToken: login.body.mfaToken, code: '111111' },
+  });
+  assert.equal(badCode.status, 401);
+
+  const verified = await client().call('/api/auth/mfa/verify', {
+    method: 'POST',
+    body: { mfaToken: login.body.mfaToken, code: generateToken(setup.body.secret) },
+  });
+  assert.equal(verified.status, 200);
+  assert.ok(verified.body.accessToken);
+
+  // A backup code also works, and is single use.
+  const second = await client().call('/api/auth/login', {
+    method: 'POST',
+    body: { username: 'mfa_user', password: 'test-password-123' },
+  });
+  const backupCode = enabled.body.backupCodes[0];
+  const withBackup = await client().call('/api/auth/mfa/verify', {
+    method: 'POST',
+    body: { mfaToken: second.body.mfaToken, code: backupCode },
+  });
+  assert.equal(withBackup.status, 200);
+
+  const third = await client().call('/api/auth/login', {
+    method: 'POST',
+    body: { username: 'mfa_user', password: 'test-password-123' },
+  });
+  const reused = await client().call('/api/auth/mfa/verify', {
+    method: 'POST',
+    body: { mfaToken: third.body.mfaToken, code: backupCode },
+  });
+  assert.equal(reused.status, 401, 'a backup code cannot be reused');
+});
+
+test('email verification and password reset use single-use tokens', async () => {
+  const { createEmailToken } = await import('../src/modules/auth/email-tokens.js');
+  const { db } = await import('../src/db/index.js');
+  const me = await newUser('mailer');
+
+  const verifyToken = await createEmailToken(me.user.id, 'verify');
+  const verified = await client().call('/api/auth/verify-email', { method: 'POST', body: { token: verifyToken } });
+  assert.equal(verified.status, 200);
+
+  const again = await client().call('/api/auth/verify-email', { method: 'POST', body: { token: verifyToken } });
+  assert.equal(again.status, 401, 'a verification token is single use');
+
+  const resetToken = await createEmailToken(me.user.id, 'reset');
+  const reset = await client().call('/api/auth/reset-password', {
+    method: 'POST',
+    body: { token: resetToken, password: 'a-brand-new-password' },
+  });
+  assert.equal(reset.status, 200);
+
+  const oldLogin = await client().call('/api/auth/login', { method: 'POST', body: { username: 'mailer', password: 'test-password-123' } });
+  assert.equal(oldLogin.status, 401, 'the old password stops working');
+  const newLogin = await client().call('/api/auth/login', { method: 'POST', body: { username: 'mailer', password: 'a-brand-new-password' } });
+  assert.equal(newLogin.status, 200);
+
+  const sessions = await db.execute({ sql: 'SELECT COUNT(*) AS c FROM sessions WHERE user_id = ? AND revoked_at IS NULL', args: [me.user.id] });
+  assert.ok(Number(sessions.rows[0].c) <= 1, 'a reset revokes existing sessions');
+
+  // Unknown identifiers behave identically (no account enumeration).
+  const unknown = await client().call('/api/auth/forgot-password', { method: 'POST', body: { identifier: 'nobody-here' } });
+  assert.equal(unknown.status, 200);
+});
+
+test('members can report a message and admins can resolve it', async () => {
+  const { db } = await import('../src/db/index.js');
+  const author = await newUser('troll');
+  const reporter = await newUser('witness');
+  const chat = await author.api.call('/api/chats/direct', { method: 'POST', token: author.token, body: { userId: reporter.user.id } });
+  const chatId = chat.body.chat.id;
+  const sent = await author.api.call(`/api/chats/${chatId}/messages`, { method: 'POST', token: author.token, body: { type: 'text', body: 'something unpleasant' } });
+
+  const report = await reporter.api.call('/api/reports', {
+    method: 'POST',
+    token: reporter.token,
+    body: { messageId: sent.body.message.id, reason: 'abuse' },
+  });
+  assert.equal(report.status, 201);
+
+  const denied = await reporter.api.call('/api/admin/reports', { token: reporter.token });
+  assert.equal(denied.status, 403, 'moderation is admin-only');
+
+  await db.execute({ sql: "UPDATE users SET role = 'admin' WHERE id = ?", args: [reporter.user.id] });
+  const login = await client().call('/api/auth/login', { method: 'POST', body: { username: 'witness', password: 'test-password-123' } });
+  const adminToken = login.body.accessToken;
+
+  const queue = await reporter.api.call('/api/admin/reports?status=open', { token: adminToken });
+  assert.equal(queue.status, 200);
+  assert.ok(queue.body.reports.some((r) => r.id === report.body.id));
+
+  const resolved = await reporter.api.call(`/api/admin/reports/${report.body.id}/resolve`, {
+    method: 'POST',
+    token: adminToken,
+    body: { action: 'remove-message' },
+  });
+  assert.equal(resolved.status, 200);
+
+  const after = await author.api.call(`/api/chats/${chatId}/messages`, { token: author.token });
+  assert.ok(after.body.messages.at(-1).deletedAt, 'the reported message is removed');
+});
+
+test('push endpoints report their configuration state', async () => {
+  const me = await newUser('pusher');
+  const key = await me.api.call('/api/push/key', { token: me.token });
+  assert.equal(key.status, 200);
+  assert.equal(key.body.enabled, false, 'no VAPID keys in tests');
+  assert.equal(key.body.publicKey, null);
+});
+
 test('security headers and rate limiting are wired up', async () => {
   const res = await fetch(`${baseUrl}/healthz`);
   assert.equal(res.status, 200);

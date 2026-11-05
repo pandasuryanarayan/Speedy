@@ -466,6 +466,20 @@ export function createChatPane(handlers) {
         }),
       );
     }
+    if (!mine && !message.deletedAt) {
+      items.push(h('div', { class: 'menu-sep' }));
+      items.push(
+        h('button', {
+          type: 'button',
+          class: 'danger',
+          html: `${icon('flag')}<span>Report message</span>`,
+          onclick: () => {
+            closeMenus();
+            handlers.onReport?.(message);
+          },
+        }),
+      );
+    }
     if (mine && !message.deletedAt) {
       items.push(h('div', { class: 'menu-sep' }));
       if (message.type === 'text') {

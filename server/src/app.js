@@ -14,6 +14,8 @@ import { usersRouter } from './modules/users/routes.js';
 import { chatsRouter } from './modules/chats/routes.js';
 import { messagesRouter } from './modules/messages/routes.js';
 import { attachmentsRouter } from './modules/attachments/routes.js';
+import { adminRouter, reportsRouter } from './modules/moderation/routes.js';
+import { pushRouter } from './modules/notifications/routes.js';
 
 const pkg = JSON.parse(fs.readFileSync(path.join(config.projectRoot, 'package.json'), 'utf8'));
 
@@ -53,6 +55,9 @@ export function createApp() {
   app.use('/api/users', usersRouter);
   app.use('/api/chats', chatsRouter);
   app.use('/api/attachments', attachmentsRouter);
+  app.use('/api/reports', reportsRouter);
+  app.use('/api/admin', adminRouter);
+  app.use('/api/push', pushRouter);
   app.use('/api', messagesRouter);
 
   app.use('/api', notFoundHandler);

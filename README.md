@@ -4,9 +4,12 @@
 engineering review would ask for.**
 
 Speedy is a complete chat application — direct and group conversations, media and file sharing,
-delivery and read receipts, presence, pinning and password-locked conversations — built on a small,
-auditable stack: Node.js, Socket.IO, SQLite and vanilla ES modules. No build pipeline, no ORM, no
-framework churn.
+delivery and read receipts, presence, pinning, password-locked conversations, two-factor sign-in and
+a moderation queue — built on a small, auditable stack: Node.js, Socket.IO, SQLite and vanilla ES
+modules. No build pipeline, no ORM, no framework churn.
+
+It is also **yours to host**: one command on a VPS, a Compose file with TLS, an env-driven auth
+policy, and no managed service in the dependency chain.
 
 ![Speedy — conversation view](docs/screenshots/chat.png)
 
@@ -19,6 +22,7 @@ framework churn.
 ## Contents
 
 - [Capabilities](#capabilities)
+- [Self-hosting](#self-hosting)
 - [Architecture](#architecture)
 - [Security controls](#security-controls)
 - [Getting started](#getting-started)
@@ -44,15 +48,45 @@ inline previews and a lightbox · in-conversation search · unread counts.
 Pin conversations to the top · lock a conversation behind the account password · mute · filters
 (All / Unread / Groups) · block contacts.
 
-**Accounts and groups**
-Username + password accounts · profile with display name, about and avatar · group roles
+**Accounts, security and groups**
+Username + password accounts · optional email verification and password reset · TOTP two-factor with
+single-use backup codes · breached-password screening · profile with display name, about and avatar ·
+group roles
 (owner / admin / member) · add, remove and rename · leave with ownership transfer · session list
 with per-device revocation.
 
+**Moderation and operations**
+Report a message from its menu · admin console with an open-reports queue (dismiss, remove message,
+disable author) · account enable/disable · audit log with optional Slack-compatible alerting ·
+Web Push notifications (VAPID) · browser-side service worker for delivery.
+
 **Product quality**
-Responsive three-pane desktop layout and full-screen mobile layout · one consistent brand theme ·
-keyboard shortcuts · accessible markup with focus states and reduced-motion support · optimistic
-sending with offline detection and retry.
+Responsive three-pane desktop layout and full-screen mobile layout · one consistent brand theme with a
+single 1.7-stroke icon set · keyboard shortcuts · accessible markup with focus states and
+reduced-motion support · optimistic sending with offline detection and retry.
+
+## Self-hosting
+
+```bash
+git clone <your-fork-url> speedy && cd speedy
+sudo ./install.sh          # Docker: generates secrets, builds, starts
+```
+
+Or with TLS and Redis in front of it:
+
+```bash
+cp .env.example .env && node scripts/setup.js --force --origin https://chat.example.com
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Without Docker: `npm ci --omit=dev && node scripts/setup.js && NODE_ENV=production npm start`, behind
+Caddy or nginx. Full runbook — env matrix, systemd unit, backups, upgrades, scaling — is in
+**[docs/DEPLOY.md](docs/DEPLOY.md)**.
+
+**Auth policy is configuration, not code.** `ALLOW_REGISTRATION` closes public signups once your team
+is onboarded, `MFA_POLICY` chooses off/optional/required, `REQUIRE_EMAIL_VERIFICATION` turns on
+confirmation emails, `ADMIN_USERNAMES` promotes your moderators at boot, and `SMTP_*` wires up reset
+mail. A clone behaves the way the operator wants without touching a source file.
 
 ## Architecture
 
@@ -98,6 +132,10 @@ button.
 | Brute force | Per-account lockout after 5 failures (15 min) plus per-IP rate limits on `/auth/login` and `/auth/register` (20 / 15 min, successful attempts not counted) |
 | Username policy | Lower-cased, length and character limits, reserved names refused (`admin`, `root`, `support`, …) |
 | Password policy | Minimum 10 characters, maximum 128, no silent truncation |
+| Breached passwords | Checked against Have I Been Pwned via k-anonymity (only a 5-character SHA-1 prefix leaves the server); fails open on outage |
+| Second factor | RFC 6238 TOTP (SHA-1, 6 digits, 30 s, ±1 step drift) with 10 single-use backup codes stored as SHA-256 hashes; password alone yields only a 5-minute challenge, never a session |
+| Email ownership | Verification and reset links are 256-bit random tokens, stored hashed, single use, expiring (24 h / 1 h); a reset revokes every existing session |
+| Registration policy | `ALLOW_REGISTRATION`, `MFA_POLICY`, `REQUIRE_EMAIL_VERIFICATION` are operator-controlled; admin roles sync from `ADMIN_USERNAMES` at boot |
 
 ### Sessions and tokens
 
@@ -155,6 +193,7 @@ button.
 | Image handling | Every image is decoded and **re-encoded** — this strips EXIF/GPS and destroys polyglot payloads (a valid PNG with appended PHP code does not survive) |
 | Filenames | Path components, control characters and reserved characters stripped; 120-character cap; stored under a random UUID |
 | File serving | `Content-Type` from the sniffed type, `nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, `Content-Disposition` inline only for JPEG/PNG/GIF/WebP |
+| Malware scanning | Optional ClamAV `INSTREAM` scan before a file is written; an infected upload is rejected and audited |
 | SSRF | `lib/safe-fetch.js` is the only sanctioned outbound HTTP path: http/https only, no credentials in the URL, private/loopback/link-local/metadata addresses refused, DNS results re-checked (rebinding), redirects re-validated, time and size caps |
 
 ### Realtime
@@ -180,6 +219,10 @@ button.
 | Container | Non-root user, all capabilities dropped, `no-new-privileges`, read-only root filesystem with a writable data volume |
 | Shutdown | Graceful on `SIGTERM`/`SIGINT`; uncaught exceptions are logged then exit non-zero so the supervisor restarts cleanly |
 | Rate limits | 300 req/min per IP globally, 20 auth attempts / 15 min, 90 writes/min, 60 uploads/hour, 30 socket events / 10 s |
+| Alerting | Audit events that matter (token replay, lockouts, malware, account deletion, moderation actions) are posted to `ALERT_WEBHOOK_URL` |
+| Moderation | Any member can report a message; admins get a queue and can dismiss, delete the message or disable the author, all audited |
+| CI security | GitHub Actions runs the test suite, `npm audit --audit-level=high`, a committed-secret check, and CodeQL with `security-and-quality` queries; Dependabot covers npm, actions and Docker |
+| Scaling | Optional Redis adapter (`REDIS_URL`) lets several instances share socket rooms |
 
 ## Getting started
 
@@ -215,6 +258,16 @@ Demo accounts created by `npm run seed` (password `speedy-demo-123`): `alice`, `
 | `TRUST_PROXY` | `0` | Set to `1` behind nginx/Caddy/Cloudflare |
 | `MAX_UPLOAD_BYTES` | `10485760` | Per-file upload limit |
 | `LOG_LEVEL` | `info` | Pino level |
+| `ALLOW_REGISTRATION` | `true` | Close public signups once onboarding is done |
+| `MFA_POLICY` | `optional` | `off`, `optional` or `required` |
+| `REQUIRE_EMAIL_VERIFICATION` | `false` | Needs `SMTP_*` |
+| `ADMIN_USERNAMES` | empty | Comma-separated; promoted to admin at boot |
+| `SMTP_HOST` / `SMTP_*` | empty | Password reset and verification mail; without it links are logged |
+| `HIBP_ENABLED` | `true` | Breached-password screening |
+| `CLAMAV_HOST` | empty | Enables upload malware scanning |
+| `ALERT_WEBHOOK_URL` | empty | Slack-compatible security alerts |
+| `REDIS_URL` | empty | Socket.IO adapter for multi-instance |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | empty | Web Push (`npm run vapid`) |
 
 ## Operations
 
@@ -274,13 +327,14 @@ GET    /api/attachments/:id          POST   /api/chats/:id/read
 npm test
 ```
 
-24 tests run against a throwaway SQLite database — no mocks, no external services. They cover
+29 tests run against a throwaway SQLite database — no mocks, no external services. They cover
 registration and validation, duplicate usernames, generic login failures, chat creation, encryption at
 rest, authorization on reads and writes, edit/delete ownership, reactions, group roles, refresh
 rotation with reuse detection, CSRF enforcement, idle and absolute session expiry, logout revocation,
 upload sniffing, image re-encoding and encryption, signed attachment links, read receipts, pinning,
-locked chats, data export, account deletion, backup and restore, SSRF guards, security headers and the
-404/SPA split.
+locked chats, data export, account deletion, backup and restore, SSRF guards, TOTP enrolment and
+challenge, backup-code single use, email verification and reset tokens, reporting and moderation,
+push configuration, security headers and the 404/SPA split.
 
 ## Data protection and compliance
 
@@ -303,15 +357,15 @@ Stated plainly, because a security document that only lists strengths is not one
 | Area | Status | Note |
 | --- | --- | --- |
 | End-to-end encryption | **Not implemented** | Messages are encrypted in transit and at rest, but the server holds the key and can read them. Real E2EE (Signal protocol, per-device keys, safety numbers) is a separate project — see below |
-| Multi-factor authentication | Not implemented | TOTP or WebAuthn/passkeys would be the next authentication step |
-| Email/phone verification, password reset | Not implemented | Accounts are username + password; add a provider and a signed reset-token table |
-| Breached-password screening | Not implemented | HIBP k-anonymity check at registration |
-| Malware scanning | Not implemented | Add ClamAV or a cloud scanner in the upload pipeline |
-| Moderation tooling | Partial | Users can block; there is no report queue or admin console |
-| Push notifications | Not implemented | Browser-first; needs a service worker and VAPID |
-| Horizontal scaling | Single instance | Presence and socket rooms are in-process; a Redis adapter plus a shared limiter is the upgrade path |
-| Alerting | Not implemented | The audit log exists but is not shipped to a SIEM or alerting system |
-| CI security scanning | Not implemented | Add `npm audit`, Dependabot and a SAST pass to the pipeline |
+| Multi-factor authentication | Implemented (TOTP) | WebAuthn/passkeys would be the next step; TOTP only right now |
+| Email verification / password reset | Implemented, needs SMTP | Without `SMTP_*` the links are written to the log so a self-hoster can complete setup manually |
+| Breached-password screening | Implemented | HIBP k-anonymity, fails open on network failure |
+| Malware scanning | Implemented, optional | Requires a clamd endpoint; images are always re-encoded regardless |
+| Moderation tooling | Implemented (basic) | Report queue, remove message, disable account. No appeals, no per-community policies |
+| Push notifications | Implemented (VAPID) | Requires keys and browser permission; iOS Safari needs the app added to the home screen |
+| Horizontal scaling | Partial | Redis adapter shares socket rooms; presence and rate limits are still in-process |
+| Alerting / SIEM | Partial | Webhook for important events; no batching, no severity routing, no SIEM connector |
+| CI security scanning | Implemented | Tests, audit, secret check, CodeQL, Dependabot — no DAST or runtime scanning |
 
 **On end-to-end encryption.** It is not a switch. Doing it honestly means per-device keypairs,
 a key directory with verification, group key distribution, recovery for a lost device, and accepting

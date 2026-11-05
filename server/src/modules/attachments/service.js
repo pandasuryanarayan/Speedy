@@ -8,6 +8,8 @@ import { newId } from '../../lib/ids.js';
 import { sniffMime, safeFileName } from '../../lib/files.js';
 import { normaliseImage } from '../../lib/images.js';
 import { decryptBuffer, encryptBuffer } from '../../lib/crypto.js';
+import { scanBuffer } from '../../lib/scan.js';
+import { audit } from '../../lib/audit.js';
 import { toAttachmentDTO } from '../../lib/dto.js';
 
 const EXT_BY_MIME = {
@@ -31,6 +33,13 @@ export async function storeUpload({ userId, file }) {
     const normalised = await normaliseImage(payload, mime);
     payload = normalised.buffer;
     mime = normalised.mime;
+  }
+
+  // Optional ClamAV pass before anything touches the disk.
+  const scan = await scanBuffer(payload);
+  if (!scan.clean) {
+    await audit('security.malware_detected', { userId, meta: { signature: scan.signature } });
+    throw badRequest('That file was rejected by the malware scanner');
   }
 
   const originalName = safeFileName(file.originalname);

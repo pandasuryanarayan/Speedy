@@ -1,6 +1,7 @@
 import { newId } from './ids.js';
 import { run } from '../db/index.js';
 import logger from './logger.js';
+import { sendAlert, shouldAlert } from './alerts.js';
 
 /**
  * Security-relevant events (logins, lockouts, token reuse, group admin changes).
@@ -25,4 +26,7 @@ export async function audit(action, { userId = null, req = null, meta = null } =
     logger.warn({ err, action }, 'failed to write audit entry');
   }
   logger.info({ action, userId, ip: entry.ip }, 'audit');
+  if (shouldAlert(action)) {
+    void sendAlert(action, { userId, ip: entry.ip, meta: meta ?? null });
+  }
 }

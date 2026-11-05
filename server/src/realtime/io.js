@@ -2,7 +2,8 @@ import { Server } from 'socket.io';
 import config from '../config.js';
 import logger from '../lib/logger.js';
 import { all, get, run } from '../db/index.js';
-import { markOffline, markOnline } from '../lib/presence.js';
+import { isOnline, markOffline, markOnline } from '../lib/presence.js';
+import { pushToUsers } from '../lib/push.js';
 import { verifyAccessToken } from '../lib/tokens.js';
 import { AppError } from '../lib/errors.js';
 import { parse, schemas } from '../lib/validate.js';
@@ -35,6 +36,24 @@ async function broadcastPresence(io, userId, online) {
   }
 }
 
+function attachRedisAdapter(io) {
+  if (!config.redisUrl) return;
+  // Optional: lets several app instances share rooms and broadcasts.
+  void (async () => {
+    try {
+      const { createAdapter } = await import('@socket.io/redis-adapter');
+      const { createClient } = await import('redis');
+      const pub = createClient({ url: config.redisUrl });
+      const sub = pub.duplicate();
+      await Promise.all([pub.connect(), sub.connect()]);
+      io.adapter(createAdapter(pub, sub));
+      logger.info('socket.io redis adapter attached');
+    } catch (err) {
+      logger.error({ err }, 'redis adapter failed - staying single-instance');
+    }
+  })();
+}
+
 export function createRealtime(httpServer) {
   const io = new Server(httpServer, {
     path: '/socket.io',
@@ -44,6 +63,8 @@ export function createRealtime(httpServer) {
     pingTimeout: 20_000,
     cors: { origin: config.publicOrigin, credentials: true, methods: ['GET', 'POST'] },
   });
+
+  attachRedisAdapter(io);
 
   io.use(async (socket, next) => {
     try {
@@ -144,8 +165,27 @@ export function createRealtime(httpServer) {
   });
 
   // Domain events -> socket fan-out
-  bus.on(EVENTS.MESSAGE_NEW, ({ chatId, message }) => {
+  bus.on(EVENTS.MESSAGE_NEW, ({ chatId, message, memberIds = [], senderId }) => {
     io.to(`chat:${chatId}`).emit('message:new', { message });
+
+    // Push only to members with no live socket - never wake someone who is
+    // already looking at the conversation.
+    const offline = memberIds.filter((id) => id !== senderId && !isOnline(id));
+    if (!offline.length) return;
+    const preview =
+      message.type === 'text'
+        ? String(message.body || '').slice(0, 140)
+        : message.type === 'image'
+          ? 'Photo'
+          : message.type === 'file'
+            ? 'Attachment'
+            : 'New message';
+    void pushToUsers(offline, {
+      title: message.sender?.displayName || 'Speedy',
+      body: preview,
+      chatId,
+      url: '/',
+    });
   });
   bus.on(EVENTS.MESSAGE_UPDATED, ({ chatId, message }) => {
     io.to(`chat:${chatId}`).emit('message:updated', { message });

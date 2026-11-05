@@ -4,10 +4,20 @@ import logger from './lib/logger.js';
 import { createApp } from './app.js';
 import { createRealtime } from './realtime/io.js';
 import { migrate } from './db/migrate.js';
-import { closeDb } from './db/index.js';
+import { closeDb, run } from './db/index.js';
+
+async function promoteConfiguredAdmins() {
+  const names = config.auth.adminUsernames;
+  if (!names.length) return;
+  for (const username of names) {
+    await run("UPDATE users SET role = 'admin' WHERE username_lower = ? AND role != 'admin'", [username]);
+  }
+  logger.info({ admins: names }, 'admin roles synchronised from ADMIN_USERNAMES');
+}
 
 async function main() {
   await migrate({ quiet: true });
+  await promoteConfiguredAdmins();
 
   const app = createApp();
   const server = http.createServer(app);
