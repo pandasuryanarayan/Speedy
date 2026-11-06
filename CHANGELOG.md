@@ -3,6 +3,23 @@
 All notable changes to Speedy. Versions follow [Semantic Versioning](https://semver.org); the format
 loosely follows [Keep a Changelog](https://keepachangelog.com).
 
+## [1.5.0]
+
+### Changed
+- **The whole interface was rebuilt against the Figma redesign.** The app is now two floating cards
+  (sidebar 348 px, conversation) on a tinted canvas with 24 px gutters, and a third 328 px card for
+  contact details when you open one.
+- Chat header, message bubbles, composer, chat rows, filters, modals and the sign-in screen were all
+  restyled to the new scale: 24 px cards, 16 px bubbles and composer, 14 px controls, 1.7-stroke icons.
+- The contact panel gained a shared-media strip showing the three most recent photos with "See all",
+  and its title now reads "Contact info".
+- Sign-in uses the split brand layout with the feature list and a full-height gradient panel.
+
+### Unchanged
+- Every feature and endpoint from 1.4.0 — messaging, receipts, presence, attachments, search, pinning,
+  locking, blocking, mentions, gallery, offline outbox, moderation, 2FA. This release only moves the
+  pixels.
+
 ## [1.4.0]
 
 ### Added

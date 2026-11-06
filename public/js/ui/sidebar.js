@@ -34,7 +34,7 @@ export function createSidebar({ onSelectChat, onNewChat, onNewGroup, onProfile, 
       h('button', { class: 'icon-btn', 'aria-label': 'New group', title: 'New group', html: icon('users'), onclick: onNewGroup }),
       h('button', { class: 'icon-btn', 'aria-label': 'New chat', title: 'New chat', html: icon('plus'), onclick: onNewChat }),
     ),
-    h('div', { class: 'search-wrap' }, h('span', { html: icon('search') }), searchInput),
+    h('div', { class: 'search-wrap' }, h('span', { class: 'icon-slot', html: icon('search') }), searchInput),
     h('div', { class: 'filters' }, ...chips),
     list,
   );

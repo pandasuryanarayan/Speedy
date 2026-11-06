@@ -81,8 +81,9 @@ disable author) · account enable/disable · audit log with optional Slack-compa
 Web Push notifications (VAPID) · browser-side service worker for delivery.
 
 **Product quality**
-Responsive three-pane desktop layout and full-screen mobile layout · light and dark themes built from
-the same tokens (nothing moves when you switch) · one 1.7-stroke icon set · keyboard shortcuts · accessible markup with focus states and
+Responsive three-card desktop layout (sidebar, conversation, contact details) and full-screen mobile
+layout · light and dark themes built from the same tokens (nothing moves when you switch) · one
+1.7-stroke icon set · designed in Figma first, then implemented · keyboard shortcuts · accessible markup with focus states and
 reduced-motion support · optimistic sending with offline detection and retry.
 
 ## Self-hosting

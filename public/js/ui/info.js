@@ -3,19 +3,53 @@ import { api } from '../api.js';
 import { confirmDialog } from './modals.js';
 import { toast, toastError } from './toast.js';
 
-export function createInfoPanel({ onClose, onChanged, onLeft, onBlocked, onUnblocked, onManage, onPin, onLock }) {
+export function createInfoPanel({ onClose, onChanged, onLeft, onBlocked, onUnblocked, onManage, onPin, onLock, onGallery }) {
   const body = h('div');
+  const mediaCache = new Map();
   const el = h(
     'aside',
     { class: 'info-panel' },
     h(
       'div',
       { class: 'info-head' },
-      h('h3', { text: 'Details' }),
+      h('h3', { text: 'Contact info' }),
       h('button', { class: 'icon-btn', 'aria-label': 'Close details', html: icon('x'), onclick: onClose }),
     ),
     body,
   );
+
+  /** Three most recent shared photos, loaded once per conversation. */
+  function renderMedia(chatId) {
+    const strip = h('div', { class: 'media-strip' });
+    const paint = (items) => {
+      if (!items.length) {
+        strip.replaceChildren(h('span', { class: 'media-empty', text: 'No photos yet' }));
+        return;
+      }
+      strip.replaceChildren(
+        ...items.map((item) =>
+          h('button', {
+            class: 'media-thumb',
+            title: item.attachment.name,
+            onclick: () => onGallery?.(),
+          }, h('img', { src: item.attachment.url, alt: item.attachment.name, loading: 'lazy' })),
+        ),
+      );
+    };
+
+    if (mediaCache.has(chatId)) {
+      paint(mediaCache.get(chatId));
+    } else {
+      strip.replaceChildren(h('span', { class: 'media-empty', text: 'Loading…' }));
+      api.get(`/api/chats/${chatId}/media?type=image&limit=3`)
+        .then((data) => {
+          mediaCache.set(chatId, data.items || []);
+          paint(data.items || []);
+        })
+        .catch(() => paint([]));
+    }
+    return strip;
+  }
 
   function render(state) {
     const chat = state.chat;
@@ -175,6 +209,13 @@ export function createInfoPanel({ onClose, onChanged, onLeft, onBlocked, onUnblo
 
     body.replaceChildren(
       h('div', { class: 'info-hero' }, heroAvatar, h('h4', { text: chat.title }), h('p', { class: 'muted', text: isGroup ? `${chat.members.length} members` : `@${chat.peer?.username || ''}` })),
+      h('div', { class: 'info-section media-section' },
+        h('div', { class: 'section-head' },
+          h('h5', { text: 'Shared media' }),
+          h('button', { class: 'link-btn', text: 'See all', onclick: () => onGallery?.() }),
+        ),
+        renderMedia(chat.id),
+      ),
       ...rows,
     );
   }
