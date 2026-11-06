@@ -215,10 +215,15 @@ export function unlockModal({ heading = 'Locked chat', title, message, onSubmit,
     let done = false;
     let busy = false;
     const input = h('input', {
-      class: 'input',
+      class: 'input pin-input',
       type: 'password',
-      placeholder: 'Your account password',
-      autocomplete: 'current-password',
+      inputmode: 'numeric',
+      autocomplete: 'off',
+      maxlength: '6',
+      placeholder: '4 to 6 digits',
+    });
+    input.addEventListener('input', () => {
+      input.value = input.value.replace(/\D/g, '').slice(0, 6);
     });
     const error = h('span', { class: 'field-error' });
     const submitBtn = h('button', { class: 'btn btn-primary', text: confirmText });
@@ -232,9 +237,9 @@ export function unlockModal({ heading = 'Locked chat', title, message, onSubmit,
 
     const submit = async () => {
       if (busy) return;
-      const password = input.value;
-      if (!password) {
-        error.textContent = 'Enter your password';
+      const pin = input.value.trim();
+      if (!/^\d{4,6}$/.test(pin)) {
+        error.textContent = 'Enter your 4 to 6 digit PIN';
         return;
       }
       busy = true;
@@ -242,7 +247,7 @@ export function unlockModal({ heading = 'Locked chat', title, message, onSubmit,
       submitBtn.textContent = 'Checking…';
       error.textContent = '';
       try {
-        await onSubmit(password);
+        await onSubmit(pin);
         finish(true);
       } catch (err) {
         error.textContent = err?.message || 'That did not work';
@@ -262,8 +267,8 @@ export function unlockModal({ heading = 'Locked chat', title, message, onSubmit,
     const ref = openModal({
       title: heading,
       body: [
-        h('p', { class: 'modal-lead muted', text: message || `“${title}” is locked. Enter your account password to open it.` }),
-        h('label', { class: 'field' }, h('span', { text: 'Password' }), input),
+        h('p', { class: 'modal-lead muted', text: message || `“${title}” is locked. Enter your PIN to open it.` }),
+        h('label', { class: 'field' }, h('span', { text: 'PIN' }), input),
         error,
       ],
       footer: [h('button', { class: 'btn btn-ghost', text: 'Cancel', onclick: () => finish(false) }), submitBtn],

@@ -109,7 +109,7 @@ export function createInfoPanel({ onClose, onChanged, onLeft, onBlocked, onUnblo
         h('div', { class: 'info-row' },
           h('span', { class: 'grow' },
             h('span', { class: 'name', text: 'Lock chat' }),
-            h('span', { class: 'sub', text: chat.locked ? 'Password required to open' : 'Hide behind your account password' }),
+            h('span', { class: 'sub', text: chat.locked ? 'PIN required to open' : 'Hide behind a 4 to 6 digit PIN' }),
           ),
           h('button', {
             class: 'btn btn-sm',

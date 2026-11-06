@@ -185,3 +185,14 @@ Connect to `/socket.io` with `auth: { token: <accessToken> }`.
 | `typing` | `{ chatId, userId, isTyping }` |
 | `presence` | `{ userId, online, lastSeenAt }` |
 | `chat:new` / `chat:updated` | `{ chatId }` |
+
+### POST /chats/:id/lock · POST /chats/:id/unlock
+
+```json
+{ "locked": true, "pin": "2468" }
+```
+
+A locked conversation is hidden behind a **4–6 digit PIN**, not the account password. The first lock on
+an account sets the PIN (hashed with scrypt); later locks reuse it. Removing a lock requires the PIN.
+`POST /unlock` accepts `{ "pin": "2468" }` and returns a short-lived `unlockToken` for the
+`X-Chat-Unlock` header. Wrong PINs return `401 bad_pin`; malformed values return `422`.

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { asyncHandler } from '../../lib/errors.js';
+import { asyncHandler, unprocessable } from '../../lib/errors.js';
 import { parse, schemas } from '../../lib/validate.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { writeLimiter } from '../../middleware/security.js';
@@ -95,16 +95,20 @@ chatsRouter.post(
   writeLimiter,
   asyncHandler(async (req, res) => {
     const locked = Boolean(req.body?.locked);
-    const password = typeof req.body?.password === 'string' ? req.body.password : undefined;
-    res.json({ data: await chats.setLocked(req.user.id, req.params.id, { locked, password }) });
+    const pin = req.body?.pin === undefined ? undefined : String(req.body.pin).trim();
+    if (pin !== undefined && !/^\d{4,6}$/.test(pin)) {
+      throw unprocessable('A locked chat uses a PIN of 4 to 6 digits');
+    }
+    res.json({ data: await chats.setLocked(req.user.id, req.params.id, { locked, pin }) });
   }),
 );
 
 chatsRouter.post(
   '/:id/unlock',
   asyncHandler(async (req, res) => {
-    const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    res.json({ data: await chats.unlockChat(req.user.id, req.params.id, { password }) });
+    const pin = String(req.body?.pin ?? '').trim();
+    if (!/^\d{4,6}$/.test(pin)) throw unprocessable('Enter your 4 to 6 digit PIN');
+    res.json({ data: await chats.unlockChat(req.user.id, req.params.id, { pin }) });
   }),
 );
 

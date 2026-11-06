@@ -4,7 +4,7 @@ import { decryptText } from '../../lib/crypto.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../../lib/errors.js';
 import { newId } from '../../lib/ids.js';
 import { attachmentUrl, toUserDTO } from '../../lib/dto.js';
-import { verifyPassword } from '../../lib/password.js';
+import { hashPassword, verifyPassword } from '../../lib/password.js';
 import { signChatUnlock, verifyChatUnlock } from '../../lib/signed.js';
 import { bus, EVENTS } from '../../realtime/bus.js';
 import { isBlockedBetween } from '../users/service.js';
@@ -364,42 +364,54 @@ export async function setPinned(userId, chatId, pinned) {
   return { pinned: Boolean(pinned) };
 }
 
-async function assertPassword(userId, password) {
-  const user = await get('SELECT password_hash FROM users WHERE id = ?', [userId]);
-  const ok = user && password ? await verifyPassword(password, user.password_hash) : false;
-  if (!ok) throw new AppError(401, 'bad_password', 'That password is not correct');
-}
-
 /**
- * Locking hides the conversation behind the account password. The `locked`
- * flag stays set while unlocked - the token returned by unlockChat() is what
- * grants temporary access, so closing the tab re-locks the chat.
+ * Locking hides the conversation behind a 4-6 digit PIN chosen by the user -
+ * deliberately not the account password, which is long and typed on a keyboard.
+ * The flag stays set while unlocked; unlockChat() returns a short-lived token,
+ * so closing the tab re-locks the chat.
  */
-export async function setLocked(userId, chatId, { locked, password }) {
+export async function setLocked(userId, chatId, { locked, pin }) {
   await assertMember(chatId, userId);
+  const user = await get('SELECT id, pin_hash FROM users WHERE id = ?', [userId]);
 
   if (locked) {
+    // First lock on this account sets the PIN; later locks reuse it.
+    if (!user.pin_hash) {
+      if (!/^\d{4,6}$/.test(String(pin || ''))) {
+        throw badRequest('Choose a 4 to 6 digit PIN for locked chats');
+      }
+      await run('UPDATE users SET pin_hash = ? WHERE id = ?', [await hashPassword(String(pin)), userId]);
+    }
     await run('UPDATE chat_members SET locked = 1 WHERE chat_id = ? AND user_id = ?', [chatId, userId]);
     await audit('chat.locked', { userId, meta: { chatId } });
     return { locked: true };
   }
 
-  await assertPassword(userId, password);
+  if (!(await checkPin(user, pin))) throw new AppError(401, 'bad_pin', 'That PIN is not correct');
   await run('UPDATE chat_members SET locked = 0 WHERE chat_id = ? AND user_id = ?', [chatId, userId]);
   await audit('chat.unlocked_permanently', { userId, meta: { chatId } });
   return { locked: false };
 }
 
-export async function unlockChat(userId, chatId, { password }) {
-  const member = await assertMember(chatId, userId);
-  if (!member.locked) return { locked: false, unlockToken: null };
-
-  await assertPassword(userId, password);
-  await audit('chat.unlocked', { userId, meta: { chatId } });
-  return { locked: true, unlockToken: signChatUnlock(chatId, userId) };
+async function checkPin(user, pin) {
+  if (!user?.pin_hash || !pin) return false;
+  return verifyPassword(String(pin), user.pin_hash);
 }
 
-/** Throws 423 when a chat is locked and the caller has no valid unlock token. */
+export async function unlockChat(userId, chatId, { pin }) {
+  const member = await assertMember(chatId, userId);
+  if (!member.locked) return { unlockToken: null, alreadyOpen: true };
+
+  const user = await get('SELECT id, pin_hash FROM users WHERE id = ?', [userId]);
+  if (!(await checkPin(user, pin))) {
+    await audit('chat.unlock_failed', { userId, meta: { chatId } });
+    throw new AppError(401, 'bad_pin', 'That PIN is not correct');
+  }
+
+  await audit('chat.unlocked', { userId, meta: { chatId } });
+  return { unlockToken: signChatUnlock(chatId, userId) };
+}
+
 export function assertUnlocked(member, chatId, userId, unlockToken) {
   if (!member.locked) return;
   if (verifyChatUnlock(chatId, userId, unlockToken)) return;

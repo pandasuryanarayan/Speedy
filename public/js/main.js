@@ -13,6 +13,7 @@ import { toast, toastError } from './ui/toast.js';
 import { connectSocket, emitAsync } from './socket.js';
 import * as outbox from './queue.js';
 import * as theme from './theme.js';
+import * as notify from './notify.js';
 
 const root = document.getElementById('root');
 const LAST_CHAT_KEY = 'speedy.lastChat';
@@ -89,7 +90,7 @@ function buildShell() {
     onReport: reportMessage,
     onHide: hideMessageForMe,
     onGallery: openGallery,
-    onCancelAttachment: () => setState({ pendingAttachment: null }),
+    onCancelAttachment: (index) => setState({ pendingAttachments: (state.pendingAttachments || []).filter((_, i) => i !== index) }),
     onNewChat: newChat,
     onNotify: (message, type) => toast(message, { type }),
   });
@@ -162,7 +163,7 @@ const chatHeaders = (chatId) => {
   return token ? { 'X-Chat-Unlock': token } : {};
 };
 
-/** A locked chat needs the account password before anything is fetched. */
+/** A locked chat needs the PIN before anything is fetched. */
 async function ensureUnlocked(chat) {
   if (!chat.locked || state.unlocks.has(chat.id)) return true;
   return unlockModal({
@@ -187,7 +188,7 @@ async function openChat(chatId, { keepScroll = false } = {}) {
       hasMore: page.hasMore,
       cursor: page.nextCursor,
       replyTo: null,
-      pendingAttachment: null,
+      pendingAttachments: [],
     });
     localStorage.setItem(LAST_CHAT_KEY, chatId);
     window.__speedySocket?.emit('chat:join', { chatId });
@@ -235,11 +236,29 @@ function markRead() {
 }
 
 /* ------------------------------- actions ------------------------------- */
-async function sendMessage({ text, attachment }) {
+/**
+ * Several files are allowed per pick, but each is sent as its own message, one
+ * after another - the same thing WhatsApp does - so the composer clears and the
+ * conversation stays readable.
+ */
+async function sendMessage({ text, attachments = [] }) {
+  const chatId = state.activeChatId;
+  if (!chatId) return;
+
+  const queue = attachments.length ? attachments : [null];
+  const replyTo = state.replyTo;
+  setState({ pendingAttachments: [], replyTo: null });
+
+  for (let i = 0; i < queue.length; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await sendOne({ text: i === 0 ? text : '', attachment: queue[i], replyTo: i === 0 ? replyTo : null });
+  }
+}
+
+async function sendOne({ text, attachment, replyTo }) {
   const chatId = state.activeChatId;
   if (!chatId) return;
   const clientId = crypto.randomUUID();
-  const replyTo = state.replyTo;
   const type = attachment ? (attachment.isImage ? 'image' : 'file') : 'text';
   const payload = {
     chatId,
@@ -269,7 +288,7 @@ async function sendMessage({ text, attachment }) {
     pending: true,
   };
 
-  setState({ messages: [...state.messages, optimistic], replyTo: null, pendingAttachment: null });
+  setState({ messages: [...state.messages, optimistic] });
   chatPane.scrollToBottom();
 
   const result = await deliver(payload);
@@ -404,17 +423,32 @@ async function reactToMessage(message, emoji) {
   }
 }
 
-async function onAttach(file) {
-  if (file.size > 10 * 1024 * 1024) {
-    toast('Files must be under 10 MB', { type: 'error' });
+const MAX_ATTACHMENTS = 4;
+
+async function onAttach(files) {
+  const list = Array.isArray(files) ? files : [files];
+  const current = state.pendingAttachments || [];
+  const room = MAX_ATTACHMENTS - current.length;
+
+  if (room <= 0) {
+    toast(`You can attach up to ${MAX_ATTACHMENTS} files`, { type: 'error' });
     return;
   }
-  toast('Uploading…', { timeout: 8000 });
-  try {
-    const attachment = await api.upload(file);
-    setState({ pendingAttachment: attachment });
-  } catch (err) {
-    toastError(err);
+  if (list.length > room) toast(`Only ${room} more file${room === 1 ? '' : 's'} can be added`);
+
+  for (const file of list.slice(0, room)) {
+    if (file.size > 10 * 1024 * 1024) {
+      toast(`${file.name} is over 10 MB`, { type: 'error' });
+      continue;
+    }
+    toast(list.length > 1 ? `Uploading ${list.length} files…` : `Uploading ${file.name}…`, { timeout: 6000 });
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const attachment = await api.upload(file);
+      setState({ pendingAttachments: [...(state.pendingAttachments || []), attachment] });
+    } catch (err) {
+      toastError(err);
+    }
   }
 }
 
@@ -487,20 +521,38 @@ async function togglePin(chat) {
 async function toggleLock(chat) {
   try {
     if (!chat.locked) {
-      await api.post(`/api/chats/${chat.id}/lock`, { locked: true });
+      // The first lock on this account chooses a PIN; later locks reuse it.
+      if (!state.user.pinSet) {
+        const created = await unlockModal({
+          heading: 'Lock chat',
+          title: chat.title,
+          message: `Choose a PIN of 4 to 6 digits. You will need it to open “${chat.title}” again — it is separate from your account password.`,
+          confirmText: 'Lock chat',
+          onSubmit: async (pin) => {
+            const data = await api.post(`/api/chats/${chat.id}/lock`, { locked: true, pin });
+            state.user = { ...state.user, pinSet: true };
+            return data;
+          },
+        });
+        if (!created) return;
+      } else {
+        await api.post(`/api/chats/${chat.id}/lock`, { locked: true });
+      }
       state.unlocks.delete(chat.id);
       setState({ panelOpen: false });
       closeChat();
       await refreshChats();
-      toast('Chat locked');
+      toast('Chat locked — your PIN opens it');
       return;
     }
 
     const removed = await unlockModal({
+      heading: 'Remove lock',
       title: chat.title,
-      message: `Remove the lock from “${chat.title}”? Enter your account password to confirm.`,
-      onSubmit: async (password) => {
-        await api.post(`/api/chats/${chat.id}/lock`, { locked: false, password });
+      message: `Enter your PIN to remove the lock from “${chat.title}”.`,
+      confirmText: 'Remove lock',
+      onSubmit: async (pin) => {
+        await api.post(`/api/chats/${chat.id}/lock`, { locked: false, pin });
       },
     });
     if (!removed) return;
@@ -553,30 +605,31 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 async function enableNotifications() {
+  if (!notify.supported()) {
+    toast('This browser does not support notifications', { type: 'error' });
+    return;
+  }
+  const result = await notify.request();
+  if (result !== 'granted') {
+    toast('Notifications were blocked — allow them in the browser settings', { type: 'error' });
+    return;
+  }
+  toast('Notifications enabled for this browser');
+
+  // If the instance also has Web Push configured, subscribe so messages still
+  // arrive when the tab is closed.
   try {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-      toast('This browser does not support notifications', { type: 'error' });
-      return;
-    }
     const { enabled, publicKey } = await api.get('/api/push/key');
-    if (!enabled) {
-      toast('Push notifications are not configured on this server', { type: 'error' });
-      return;
-    }
-    const permission = await Notification.requestPermission();
-    if (permission !== 'granted') {
-      toast('Notifications were blocked in the browser', { type: 'error' });
-      return;
-    }
+    if (!enabled || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
     const registration = await navigator.serviceWorker.register('/sw.js');
-    const subscription = await registration.pushManager.subscribe({
+    const existing = await registration.pushManager.getSubscription();
+    const subscription = existing || (await registration.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(publicKey),
-    });
+    }));
     await api.post('/api/push/subscribe', { subscription: subscription.toJSON() });
-    toast('Notifications enabled');
-  } catch (err) {
-    toastError(err);
+  } catch {
+    /* local notifications still work without push */
   }
 }
 
@@ -631,6 +684,21 @@ function wireSocket(socket) {
       if (message.clientId) replaceOptimistic(message.clientId, message);
       else upsertMessage(message);
       if (message.sender?.id !== state.user.id) markRead();
+    } else if (message.sender?.id !== state.user.id) {
+      // A message in another conversation: raise a browser notification if the
+      // tab is in the background and the user allowed it.
+      notify.notify({
+        title: message.sender?.displayName || 'New message',
+        body:
+          message.type === 'text'
+            ? String(message.body || '').slice(0, 120)
+            : message.type === 'image'
+              ? 'Photo'
+              : message.type === 'file'
+                ? 'Attachment'
+                : 'New message',
+        onClick: () => openChat(message.chatId),
+      });
     }
     refreshChatsSoon();
   });

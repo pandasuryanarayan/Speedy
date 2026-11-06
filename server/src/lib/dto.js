@@ -29,6 +29,7 @@ export function toUserDTO(row, { self = false, viewerId = null } = {}) {
     dto.email = row.email ?? null;
     dto.emailVerified = Boolean(row.email_verified_at);
     dto.mfaEnabled = Boolean(row.totp_enabled_at);
+    dto.pinSet = Boolean(row.pin_hash);
   }
   return dto;
 }

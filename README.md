@@ -65,7 +65,8 @@ quoted context · emoji reactions · edit and delete-for-everyone · image and f
 inline previews and a lightbox · in-conversation search · unread counts.
 
 **Conversation management**
-Pin conversations to the top · lock a conversation behind the account password · mute · filters
+Pin conversations to the top · lock a conversation behind a 4–6 digit PIN (separate from your
+password) · mute · filters
 (All / Unread / Groups) · block contacts.
 
 **Accounts, security and groups**

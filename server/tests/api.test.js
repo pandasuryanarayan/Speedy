@@ -368,14 +368,14 @@ test('chats can be pinned to the top of the list', async () => {
   assert.equal(list.body.chats[0].id, second.body.chat.id, 'unpinning restores time order');
 });
 
-test('a locked chat needs the account password to open', async () => {
+test('a locked chat opens with the PIN, not the account password', async () => {
   const me = await newUser('sam');
   const other = await newUser('tina');
   const chat = await me.api.call('/api/chats/direct', { method: 'POST', token: me.token, body: { userId: other.user.id } });
   const chatId = chat.body.chat.id;
   await me.api.call(`/api/chats/${chatId}/messages`, { method: 'POST', token: me.token, body: { type: 'text', body: 'private plans' } });
 
-  const locked = await me.api.call(`/api/chats/${chatId}/lock`, { method: 'POST', token: me.token, body: { locked: true } });
+  const locked = await me.api.call(`/api/chats/${chatId}/lock`, { method: 'POST', token: me.token, body: { locked: true, pin: '1357' } });
   assert.equal(locked.status, 200);
 
   const blocked = await me.api.call(`/api/chats/${chatId}/messages`, { token: me.token });
@@ -390,11 +390,16 @@ test('a locked chat needs the account password to open', async () => {
   assert.equal(entry.locked, true);
   assert.equal(entry.lastMessage, null, 'a locked chat does not leak its last message');
 
-  const wrong = await me.api.call(`/api/chats/${chatId}/unlock`, { method: 'POST', token: me.token, body: { password: 'not-my-password' } });
+  const wrong = await me.api.call(`/api/chats/${chatId}/unlock`, { method: 'POST', token: me.token, body: { pin: '0000' } });
   assert.equal(wrong.status, 401);
-  assert.equal(wrong.error.code, 'bad_password');
+  assert.equal(wrong.error.code, 'bad_pin');
 
-  const right = await me.api.call(`/api/chats/${chatId}/unlock`, { method: 'POST', token: me.token, body: { password: 'test-password-123' } });
+  const withPassword = await me.api.call(`/api/chats/${chatId}/unlock`, {
+    method: 'POST', token: me.token, body: { pin: 'test-password-123' },
+  });
+  assert.equal(withPassword.status, 422, 'the account password is rejected by the PIN field');
+
+  const right = await me.api.call(`/api/chats/${chatId}/unlock`, { method: 'POST', token: me.token, body: { pin: '1357' } });
   assert.equal(right.status, 200);
   const token = right.body.unlockToken;
   assert.ok(token);
@@ -410,10 +415,10 @@ test('a locked chat needs the account password to open', async () => {
   const theirView = await other.api.call(`/api/chats/${chatId}/messages`, { token: other.token });
   assert.equal(theirView.status, 200);
 
-  // removing the lock also requires the password
-  const noPassword = await me.api.call(`/api/chats/${chatId}/lock`, { method: 'POST', token: me.token, body: { locked: false } });
-  assert.equal(noPassword.status, 401);
-  const removed = await me.api.call(`/api/chats/${chatId}/lock`, { method: 'POST', token: me.token, body: { locked: false, password: 'test-password-123' } });
+  // removing the lock also requires the PIN
+  const noPin = await me.api.call(`/api/chats/${chatId}/lock`, { method: 'POST', token: me.token, body: { locked: false } });
+  assert.equal(noPin.status, 401);
+  const removed = await me.api.call(`/api/chats/${chatId}/lock`, { method: 'POST', token: me.token, body: { locked: false, pin: '1357' } });
   assert.equal(removed.status, 200);
   const afterRemoval = await me.api.call(`/api/chats/${chatId}/messages`, { token: me.token });
   assert.equal(afterRemoval.status, 200);

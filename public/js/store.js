@@ -16,7 +16,7 @@ export const state = {
   query: '',
   panelOpen: false,
   replyTo: null,
-  pendingAttachment: null,
+  pendingAttachments: [],
   socketReady: false,
   unlocks: new Map(), // chatId -> short-lived unlock token
   unreadTotal: 0,

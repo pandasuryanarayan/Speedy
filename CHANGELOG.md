@@ -3,6 +3,23 @@
 All notable changes to Speedy. Versions follow [Semantic Versioning](https://semver.org); the format
 loosely follows [Keep a Changelog](https://keepachangelog.com).
 
+## [1.5.1]
+
+### Changed
+- **Locked chats now use a PIN, not the account password.** The first lock sets a 4–6 digit PIN
+  (scrypt-hashed, stored per user); later locks reuse it. Removing a lock needs the PIN too.
+  Migration 6 adds `users.pin_hash`.
+- The composer stacks attachments **above** the input instead of beside it, so a queued file never
+  squeezes the text field.
+- The user list is 36 px wider (384 px) to fit longer names and previews.
+- The contact panel's close button is pushed to the panel edge, away from the title.
+
+### Added
+- **Up to four attachments per pick**, uploaded one at a time and sent as separate messages.
+- **Browser notifications** — the profile asks for permission once, and messages that arrive while
+  the tab is in the background raise a system notification. Web Push still covers the closed-tab case
+  when the instance has VAPID keys.
+
 ## [1.5.0]
 
 ### Changed

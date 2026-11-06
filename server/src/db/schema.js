@@ -200,4 +200,8 @@ export const MIGRATIONS = [
   );
   CREATE INDEX idx_message_mentions_user ON message_mentions(user_id);
   `,
+  // 6 - a PIN for locked chats, separate from the account password
+  `
+  ALTER TABLE users ADD COLUMN pin_hash TEXT;
+  `,
 ];

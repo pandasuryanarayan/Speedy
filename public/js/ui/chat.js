@@ -304,10 +304,11 @@ export function createChatPane(handlers) {
     const fileInput = h('input', {
       type: 'file',
       class: 'sr-only',
+      multiple: 'true',
       onchange: (e) => {
-        const file = e.target.files?.[0];
+        const files = [...(e.target.files || [])];
         e.target.value = '';
-        if (file) handlers.onAttach(file);
+        if (files.length) handlers.onAttach(files);
       },
     });
 
@@ -407,8 +408,9 @@ export function createChatPane(handlers) {
 
     const submit = () => {
       const text = textarea.value.trim();
-      if (!text && !state.pendingAttachment) return;
-      handlers.onSend({ text, attachment: state.pendingAttachment });
+      const attachments = state.pendingAttachments || [];
+      if (!text && !attachments.length) return;
+      handlers.onSend({ text, attachments });
       textarea.value = '';
       textarea.style.height = 'auto';
       clearTimeout(typingTimer);
@@ -452,15 +454,33 @@ export function createChatPane(handlers) {
       );
     }
 
-    if (state.pendingAttachment) {
-      const att = state.pendingAttachment;
+    const pending = state.pendingAttachments || [];
+    if (pending.length) {
       rows.push(
         h(
           'div',
-          { class: 'attach-preview' },
-          att.isImage ? h('img', { src: att.url, alt: att.name }) : h('span', { class: 'file-icon', html: icon('file') }),
-          h('span', { class: 'grow' }, h('span', { class: 'file-name', text: att.name }), h('span', { class: 'file-size', text: fmtBytes(att.size) })),
-          h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Remove attachment', html: icon('x'), onclick: handlers.onCancelAttachment }),
+          { class: 'attach-previews' },
+          ...pending.map((att, index) =>
+            h(
+              'div',
+              { class: 'attach-preview' },
+              att.isImage
+                ? h('img', { src: att.url, alt: att.name })
+                : h('span', { class: 'file-icon', html: icon('file') }),
+              h('span', { class: 'grow' },
+                h('span', { class: 'file-name', text: att.name }),
+                h('span', { class: 'file-size', text: fmtBytes(att.size) }),
+              ),
+              h('button', {
+                type: 'button',
+                class: 'icon-btn',
+                'aria-label': `Remove ${att.name}`,
+                html: icon('x'),
+                onclick: () => handlers.onCancelAttachment?.(index),
+              }),
+            ),
+          ),
+          h('span', { class: 'attach-hint', text: `${pending.length} of ${handlers.maxAttachments || 4} ready — sent as separate messages` }),
         ),
       );
     }
